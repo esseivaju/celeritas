@@ -28,12 +28,24 @@ void reseed_rng(HostCRef<RngParamsData> const& params,
 {
     for (auto tid : range(TrackSlotId{state.size()}))
     {
-        RngEngine::Initializer_t init;
+        RngEngine<HostRef>::Initializer_t init;
         init.seed = params.seed;
         init.subsequence = event_id * state.size() + tid.get();
-        RngEngine engine(params, state, tid);
+        RngEngine<HostRef> engine(params, state, tid);
         engine = init;
     }
+}
+
+void reseed_rng(HostCRef<RngParamsData> const& params,
+                CompactHostRef<RngStateData> const& state,
+                size_type event_id)
+{
+    TrackSlotId tid{0};
+    RngEngine<CompactHostRef>::Initializer_t init;
+    init.seed = params.seed;
+    init.subsequence = event_id + tid.get();
+    RngEngine<CompactHostRef> engine(params, state, tid);
+    engine = init;
 }
 
 //---------------------------------------------------------------------------//

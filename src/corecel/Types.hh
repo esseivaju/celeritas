@@ -49,6 +49,7 @@ using ull_int = unsigned long long int;
 enum class MemSpace
 {
     host,  //!< CPU memory
+    compact_host,  //!< Single track host
     device,  //!< GPU memory
     mapped,  //!< Unified virtual address space (both host and device)
     size_,
@@ -93,6 +94,16 @@ using HostCRef = P<Ownership::const_reference, MemSpace::host>;
 //! Mutable reference to host memory
 template<template<Ownership, MemSpace> class S>
 using HostRef = S<Ownership::reference, MemSpace::host>;
+
+//! Managed compact host memory
+template<template<Ownership, MemSpace> class P>
+using CompactHostVal = P<Ownership::value, MemSpace::compact_host>;
+//! Immutable reference to compact host memory
+template<template<Ownership, MemSpace> class P>
+using CompactHostCRef = P<Ownership::const_reference, MemSpace::compact_host>;
+//! Mutable reference to compact host memory
+template<template<Ownership, MemSpace> class S>
+using CompactHostRef = S<Ownership::reference, MemSpace::compact_host>;
 
 //! Immutable reference to device memory
 template<template<Ownership, MemSpace> class P>

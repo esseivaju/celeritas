@@ -26,13 +26,14 @@ namespace celeritas
 /*!
  * Helper class to create views from core track data.
  */
+template<template<template<Ownership, MemSpace> class> class S = NativeRef>
 class CoreTrackView
 {
   public:
     //!@{
     //! \name Type aliases
     using ParamsRef = NativeCRef<CoreParamsData>;
-    using StateRef = NativeRef<CoreStateData>;
+    using StateRef = S<CoreStateData>;
     //!@}
 
   public:
@@ -69,7 +70,7 @@ class CoreTrackView
     inline CELER_FUNCTION PhysicsStepView make_physics_step_view() const;
 
     // Return an RNG engine
-    inline CELER_FUNCTION RngEngine make_rng_engine() const;
+    inline CELER_FUNCTION RngEngine<S> make_rng_engine() const;
 
     //! Get the index of the current thread in the current kernel
     CELER_FUNCTION ThreadId thread_id() const { return thread_; }
@@ -101,10 +102,10 @@ class CoreTrackView
 /*!
  * Construct with comprehensive param/state data and thread.
  */
-CELER_FUNCTION
-CoreTrackView::CoreTrackView(ParamsRef const& params,
-                             StateRef const& states,
-                             ThreadId thread)
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION CoreTrackView<S>::CoreTrackView(ParamsRef const& params,
+                                               StateRef const& states,
+                                               ThreadId thread)
     : states_(states), params_(params), thread_(thread)
 {
     CELER_EXPECT(thread_ < states_.size());
@@ -114,7 +115,8 @@ CoreTrackView::CoreTrackView(ParamsRef const& params,
 /*!
  * Return a simulation management view.
  */
-CELER_FUNCTION SimTrackView CoreTrackView::make_sim_view() const
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION SimTrackView CoreTrackView<S>::make_sim_view() const
 {
     return SimTrackView{params_.sim, states_.sim, this->track_slot_id()};
 }
@@ -123,7 +125,8 @@ CELER_FUNCTION SimTrackView CoreTrackView::make_sim_view() const
 /*!
  * Return a geometry view.
  */
-CELER_FUNCTION auto CoreTrackView::make_geo_view() const -> GeoTrackView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto CoreTrackView<S>::make_geo_view() const -> GeoTrackView
 {
     return GeoTrackView{
         params_.geometry, states_.geometry, this->track_slot_id()};
@@ -133,8 +136,9 @@ CELER_FUNCTION auto CoreTrackView::make_geo_view() const -> GeoTrackView
 /*!
  * Return a geometry-material view.
  */
-CELER_FUNCTION auto CoreTrackView::make_geo_material_view() const
-    -> GeoMaterialView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto
+CoreTrackView<S>::make_geo_material_view() const -> GeoMaterialView
 {
     return GeoMaterialView{params_.geo_mats};
 }
@@ -143,8 +147,9 @@ CELER_FUNCTION auto CoreTrackView::make_geo_material_view() const
 /*!
  * Return a material view.
  */
-CELER_FUNCTION auto CoreTrackView::make_material_view() const
-    -> MaterialTrackView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto
+CoreTrackView<S>::make_material_view() const -> MaterialTrackView
 {
     return MaterialTrackView{
         params_.materials, states_.materials, this->track_slot_id()};
@@ -154,8 +159,9 @@ CELER_FUNCTION auto CoreTrackView::make_material_view() const
 /*!
  * Return a particle view.
  */
-CELER_FUNCTION auto CoreTrackView::make_particle_view() const
-    -> ParticleTrackView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto
+CoreTrackView<S>::make_particle_view() const -> ParticleTrackView
 {
     return ParticleTrackView{
         params_.particles, states_.particles, this->track_slot_id()};
@@ -165,8 +171,9 @@ CELER_FUNCTION auto CoreTrackView::make_particle_view() const
 /*!
  * Return a particle view of another particle type.
  */
-CELER_FUNCTION auto CoreTrackView::make_particle_view(ParticleId pid) const
-    -> ParticleView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto
+CoreTrackView<S>::make_particle_view(ParticleId pid) const -> ParticleView
 {
     return ParticleView{params_.particles, pid};
 }
@@ -175,7 +182,8 @@ CELER_FUNCTION auto CoreTrackView::make_particle_view(ParticleId pid) const
 /*!
  * Return a cutoff view.
  */
-CELER_FUNCTION auto CoreTrackView::make_cutoff_view() const -> CutoffView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto CoreTrackView<S>::make_cutoff_view() const -> CutoffView
 {
     MaterialId mat_id = this->make_material_view().material_id();
     CELER_ASSERT(mat_id);
@@ -186,7 +194,9 @@ CELER_FUNCTION auto CoreTrackView::make_cutoff_view() const -> CutoffView
 /*!
  * Return a physics view.
  */
-CELER_FUNCTION auto CoreTrackView::make_physics_view() const -> PhysicsTrackView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto
+CoreTrackView<S>::make_physics_view() const -> PhysicsTrackView
 {
     MaterialId mat_id = this->make_material_view().material_id();
     CELER_ASSERT(mat_id);
@@ -200,8 +210,9 @@ CELER_FUNCTION auto CoreTrackView::make_physics_view() const -> PhysicsTrackView
 /*!
  * Return a physics view.
  */
-CELER_FUNCTION auto CoreTrackView::make_physics_step_view() const
-    -> PhysicsStepView
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto
+CoreTrackView<S>::make_physics_step_view() const -> PhysicsStepView
 {
     return PhysicsStepView{
         params_.physics, states_.physics, this->track_slot_id()};
@@ -211,16 +222,18 @@ CELER_FUNCTION auto CoreTrackView::make_physics_step_view() const
 /*!
  * Return the RNG engine.
  */
-CELER_FUNCTION auto CoreTrackView::make_rng_engine() const -> RngEngine
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto CoreTrackView<S>::make_rng_engine() const -> RngEngine<S>
 {
-    return RngEngine{params_.rng, states_.rng, this->track_slot_id()};
+    return RngEngine<S>{params_.rng, states_.rng, this->track_slot_id()};
 }
 
 //---------------------------------------------------------------------------//
 /*!
  * Get the track's index among the states.
  */
-CELER_FUNCTION TrackSlotId CoreTrackView::track_slot_id() const
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION TrackSlotId CoreTrackView<S>::track_slot_id() const
 {
     return TrackSlotId{states_.track_slots[thread_]};
 }
@@ -229,7 +242,8 @@ CELER_FUNCTION TrackSlotId CoreTrackView::track_slot_id() const
 /*!
  * Get the action ID for encountering a geometry boundary.
  */
-CELER_FUNCTION ActionId CoreTrackView::boundary_action() const
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION ActionId CoreTrackView<S>::boundary_action() const
 {
     return params_.scalars.boundary_action;
 }
@@ -243,7 +257,8 @@ CELER_FUNCTION ActionId CoreTrackView::boundary_action() const
  * (geometry issue). The volume *must not* change as a result of the
  * propagation, and this should be an extremely rare case.
  */
-CELER_FUNCTION ActionId CoreTrackView::propagation_limit_action() const
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION ActionId CoreTrackView<S>::propagation_limit_action() const
 {
     return params_.scalars.propagation_limit_action;
 }
@@ -252,7 +267,8 @@ CELER_FUNCTION ActionId CoreTrackView::propagation_limit_action() const
 /*!
  * Get the action ID for being abandoned while looping.
  */
-CELER_FUNCTION ActionId CoreTrackView::abandon_looping_action() const
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION ActionId CoreTrackView<S>::abandon_looping_action() const
 {
     return params_.scalars.abandon_looping_action;
 }
@@ -263,7 +279,8 @@ CELER_FUNCTION ActionId CoreTrackView::abandon_looping_action() const
  *
  * TODO: maybe have a struct for all actions to simplify the class?
  */
-CELER_FUNCTION CoreScalars const& CoreTrackView::core_scalars() const
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION CoreScalars const& CoreTrackView<S>::core_scalars() const
 {
     return params_.scalars;
 }

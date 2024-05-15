@@ -7,6 +7,7 @@
 //---------------------------------------------------------------------------//
 #pragma once
 
+#include <array>
 #include <type_traits>
 
 #ifndef CELER_DEVICE_COMPILE
@@ -122,6 +123,19 @@ struct CollectionStorage<T, Ownership::value, MemSpace::host>
     using type = DisabledStorage<T>;
 #else
     using type = std::vector<T>;
+#endif
+    type data;
+};
+
+template<class T>
+struct CollectionStorage<T, Ownership::value, MemSpace::compact_host>
+{
+#ifdef CELER_DEVICE_COMPILE
+    // Use "not implemented" but __host__ __device__ decorated functions when
+    // compiling in CUDA
+    using type = DisabledStorage<T>;
+#else
+    using type = std::array<T, 1>;
 #endif
     type data;
 };

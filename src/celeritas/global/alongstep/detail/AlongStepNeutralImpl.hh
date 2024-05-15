@@ -17,6 +17,7 @@
 namespace celeritas
 {
 //---------------------------------------------------------------------------//
+template<template<template<Ownership, MemSpace> class> class S = NativeRef>
 class CoreTrackView;
 
 namespace detail

@@ -19,7 +19,7 @@ namespace celeritas
 char const* to_cstring(MemSpace value)
 {
     static EnumStringMapper<MemSpace> const to_cstring_impl{
-        "host", "device", "mapped"};
+        "host", "compact_host", "device", "mapped"};
     return to_cstring_impl(value);
 }
 

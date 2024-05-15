@@ -22,7 +22,8 @@ using RngEngine = CuHipRngEngine;
 #    include "XorwowRngEngine.hh"
 namespace celeritas
 {
-using RngEngine = XorwowRngEngine;
+template<template<template<Ownership, MemSpace> class> class S = NativeRef>
+using RngEngine = XorwowRngEngine<S>;
 }
 #endif
 // IWYU pragma: end_exports

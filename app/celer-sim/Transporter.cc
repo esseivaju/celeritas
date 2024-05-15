@@ -179,6 +179,7 @@ void Transporter<M>::accum_action_times(MapStrDouble* result) const
 //---------------------------------------------------------------------------//
 
 template class Transporter<MemSpace::host>;
+template class Transporter<MemSpace::compact_host>;
 template class Transporter<MemSpace::device>;
 
 //---------------------------------------------------------------------------//

@@ -26,6 +26,10 @@ void reseed_rng(HostCRef<RngParamsData> const&,
                 HostRef<RngStateData> const&,
                 size_type);
 
+void reseed_rng(HostCRef<RngParamsData> const&,
+                CompactHostRef<RngStateData> const&,
+                size_type);
+
 #if !CELER_USE_DEVICE
 //---------------------------------------------------------------------------//
 /*!

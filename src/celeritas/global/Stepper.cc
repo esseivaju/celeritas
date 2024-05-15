@@ -124,6 +124,7 @@ void Stepper<M>::reseed(EventId event_id)
 //---------------------------------------------------------------------------//
 
 template class Stepper<MemSpace::host>;
+template class Stepper<MemSpace::compact_host>;
 template class Stepper<MemSpace::device>;
 
 //---------------------------------------------------------------------------//

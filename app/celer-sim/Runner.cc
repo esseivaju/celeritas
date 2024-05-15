@@ -582,11 +582,13 @@ auto Runner::get_transporter(StreamId stream) -> TransporterBase&
                 return std::make_unique<Transporter<MemSpace::device>>(
                     std::move(local_trans_inp));
             }
-            else
+            if (local_trans_inp.num_track_slots == 1)
             {
-                return std::make_unique<Transporter<MemSpace::host>>(
+                return std::make_unique<Transporter<MemSpace::compact_host>>(
                     std::move(local_trans_inp));
             }
+            return std::make_unique<Transporter<MemSpace::host>>(
+                std::move(local_trans_inp));
         }();
     }
     CELER_ENSURE(result);

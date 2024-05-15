@@ -49,6 +49,7 @@ namespace celeritas
  * Number Generators". ARL-TR-4498.
  * https://apps.dtic.mil/sti/pdfs/ADA486637.pdf.
  */
+template<template<template<Ownership, MemSpace> class> class S = NativeRef>
 class XorwowRngEngine
 {
   public:
@@ -58,7 +59,7 @@ class XorwowRngEngine
     using result_type = uint_t;
     using Initializer_t = XorwowRngInitializer;
     using ParamsRef = NativeCRef<XorwowRngParamsData>;
-    using StateRef = NativeRef<XorwowRngStateData>;
+    using StateRef = S<XorwowRngStateData>;
     //!@}
 
   public:
@@ -111,8 +112,8 @@ class XorwowRngEngine
 /*!
  * Specialization of GenerateCanonical for XorwowRngEngine.
  */
-template<class RealType>
-class GenerateCanonical<XorwowRngEngine, RealType>
+template<template<template<Ownership, MemSpace> class> class S, class RealType>
+class GenerateCanonical<XorwowRngEngine<S>, RealType>
 {
   public:
     //!@{
@@ -123,7 +124,7 @@ class GenerateCanonical<XorwowRngEngine, RealType>
 
   public:
     //! Sample a random number on [0, 1)
-    CELER_FORCEINLINE_FUNCTION result_type operator()(XorwowRngEngine& rng)
+    CELER_FORCEINLINE_FUNCTION result_type operator()(XorwowRngEngine<S>& rng)
     {
         return detail::GenerateCanonical32<RealType>()(rng);
     }
@@ -135,10 +136,10 @@ class GenerateCanonical<XorwowRngEngine, RealType>
 /*!
  * Construct from state and persistent data.
  */
-CELER_FUNCTION
-XorwowRngEngine::XorwowRngEngine(ParamsRef const& params,
-                                 StateRef const& state,
-                                 TrackSlotId tid)
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION XorwowRngEngine<S>::XorwowRngEngine(ParamsRef const& params,
+                                                   StateRef const& state,
+                                                   TrackSlotId tid)
     : params_(params)
 {
     CELER_EXPECT(tid < state.state.size());
@@ -158,8 +159,9 @@ XorwowRngEngine::XorwowRngEngine(ParamsRef const& params,
  * Kuramoto, and Ashihara, "Common defects in initialization of pseudorandom
  * number generators". https://dl.acm.org/doi/10.1145/1276927.1276928.)
  */
-CELER_FUNCTION XorwowRngEngine&
-XorwowRngEngine::operator=(Initializer_t const& init)
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION XorwowRngEngine<S>&
+XorwowRngEngine<S>::operator=(Initializer_t const& init)
 {
     auto& s = state_->xorstate;
 
@@ -186,7 +188,8 @@ XorwowRngEngine::operator=(Initializer_t const& init)
 /*!
  * Generate a 32-bit pseudorandom number using the 'xorwow' engine.
  */
-CELER_FUNCTION auto XorwowRngEngine::operator()() -> result_type
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION auto XorwowRngEngine<S>::operator()() -> result_type
 {
     this->next();
     state_->weylstate += 362437u;
@@ -197,7 +200,8 @@ CELER_FUNCTION auto XorwowRngEngine::operator()() -> result_type
 /*!
  * Advance the state \c count times.
  */
-CELER_FUNCTION void XorwowRngEngine::discard(ull_int count)
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION void XorwowRngEngine<S>::discard(ull_int count)
 {
     this->jump(count, params_.jump);
     state_->weylstate += static_cast<unsigned int>(count) * 362437u;
@@ -210,7 +214,8 @@ CELER_FUNCTION void XorwowRngEngine::discard(ull_int count)
  * Note that the Weyl sequence value remains the same since it has period 2^32
  * which divides evenly into 2^67.
  */
-CELER_FUNCTION void XorwowRngEngine::discard_subsequence(ull_int count)
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION void XorwowRngEngine<S>::discard_subsequence(ull_int count)
 {
     this->jump(count, params_.jump_subsequence);
 }
@@ -221,7 +226,8 @@ CELER_FUNCTION void XorwowRngEngine::discard_subsequence(ull_int count)
  *
  * This does not update the Weyl sequence value.
  */
-CELER_FUNCTION void XorwowRngEngine::next()
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION void XorwowRngEngine<S>::next()
 {
     auto& s = state_->xorstate;
     auto const t = (s[0] ^ (s[0] >> 2u));
@@ -240,8 +246,9 @@ CELER_FUNCTION void XorwowRngEngine::next()
  * This applies the jump polynomials until the given number of steps or
  * subsequences have been skipped.
  */
+template<template<template<Ownership, MemSpace> class> class S>
 CELER_FUNCTION void
-XorwowRngEngine::jump(ull_int count, ArrayJumpPoly const& jump_poly_arr)
+XorwowRngEngine<S>::jump(ull_int count, ArrayJumpPoly const& jump_poly_arr)
 {
     // Maximum number of times to apply any jump polynomial. Since the jump
     // sizes are 4^i for i = [0, 32), the max is 3.
@@ -291,7 +298,8 @@ XorwowRngEngine::jump(ull_int count, ArrayJumpPoly const& jump_poly_arr)
  * addition is the same as subtraction and equivalent to bitwise exclusive or,
  * and multiplication is bitwise and.
  */
-CELER_FUNCTION void XorwowRngEngine::jump(JumpPoly const& jump_poly)
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION void XorwowRngEngine<S>::jump(JumpPoly const& jump_poly)
 {
     Array<uint_t, 5> s = {0};
     for (size_type i : range(params_.num_words()))
@@ -317,7 +325,8 @@ CELER_FUNCTION void XorwowRngEngine::jump(JumpPoly const& jump_poly)
  *
  * This is used to initialize the XORWOW state. See https://prng.di.unimi.it.
  */
-CELER_FUNCTION uint64_t XorwowRngEngine::SplitMix64::operator()()
+template<template<template<Ownership, MemSpace> class> class S>
+CELER_FUNCTION uint64_t XorwowRngEngine<S>::SplitMix64::operator()()
 {
     uint64_t z = (state += 0x9e3779b97f4a7c15ull);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
