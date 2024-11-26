@@ -21,6 +21,7 @@ jobs:
     - name: Download and Extract Artifacts
       uses: actions/download-artifact@v4
       with:
+        # Syntax: https://www.gnu.org/software/bash/manual/html_node/Pattern-Matching.html
         pattern: "+(event-file|test-results-*)"
         merge-multiple: true
         github-token: ${{secrets.GITHUB_TOKEN}}
