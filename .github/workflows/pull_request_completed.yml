@@ -10,6 +10,7 @@ on:
       - completed
 
 permissions:
+  actions: read
   checks: write
   pull-requests: write
 
@@ -22,6 +23,7 @@ jobs:
       with:
         pattern: "(event-file|test-results-.*)"
         merge-multiple: true
+        github-token: ${{secrets.GITHUB_TOKEN}}
         run-id: ${{github.event.workflow_run.id}}
         path: artifacts
     - name: Publish PR comment
