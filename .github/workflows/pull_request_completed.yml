@@ -17,8 +17,11 @@ permissions:
 jobs:
   report-tests:
     runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_DIR: artifacts
+      ARTIFACTS_DOWNLOAD_DIR: artifacts-download
     steps:
-    - name: Download and Extract Artifacts
+    - name: Download Artifacts
       uses: actions/download-artifact@v4
       with:
         # Syntax: https://www.gnu.org/software/bash/manual/html_node/Pattern-Matching.html
@@ -26,21 +29,27 @@ jobs:
         merge-multiple: true
         github-token: ${{secrets.GITHUB_TOKEN}}
         run-id: ${{github.event.workflow_run.id}}
-        path: artifacts
+        path: ${{env.ARTIFACTS_DOWNLOAD_DIR}}
+    - name: Extract Artifacts
+      if: always()
+      run: |
+        ls -R ${ARTIFACTS_DOWNLOAD_DIR}
+        tar -xzf ${ARTIFACTS_DOWNLOAD_DIR}/* -C ${ARTIFACTS_DIR}
+        ls -R ${ARTIFACTS_DIR}
     - name: Publish PR comment
       uses: EnricoMi/publish-unit-test-result-action@82082dac68ad6a19d980f8ce817e108b9f496c2a # v2.17.1
       if: always()
       with:
         check_name: "Test summary"
         commit: ${{github.event.workflow_run.head_sha}}
-        event_file: artifacts/event-file/event.json
+        event_file: ${ARTIFACTS_DIR}/event-file/event.json
         event_name: ${{github.event.workflow_run.event}}
-        files: "artifacts/**/*.xml"
+        files: "${ARTIFACTS_DIR}/**/*.xml"
     - name: Publish comments on source code
       uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # v4.3.1
       if: always()
       with:
         commit: ${{github.event.workflow_run.head_sha}}
-        report_paths: "artifacts/**/*.xml"
+        report_paths: "${ARTIFACTS_DIR}/**/*.xml"
 
 # vim: set nowrap tw=100:
