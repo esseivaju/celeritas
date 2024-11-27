@@ -19,22 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ARTIFACTS_DIR: artifacts
-      ARTIFACTS_DOWNLOAD_DIR: artifacts-download
     steps:
     - name: Download Artifacts
       uses: actions/download-artifact@v4
       with:
         # Syntax: https://www.gnu.org/software/bash/manual/html_node/Pattern-Matching.html
         pattern: "+(event-file|test-results-*)"
-        merge-multiple: true
+        merge-multiple: false
         github-token: ${{secrets.GITHUB_TOKEN}}
         run-id: ${{github.event.workflow_run.id}}
-        path: ${{env.ARTIFACTS_DOWNLOAD_DIR}}
-    - name: Extract Artifacts
+        path: ${{env.ARTIFACTS_DIR}}
+    - name: List Artifacts
       if: always()
       run: |
-        ls -R ${ARTIFACTS_DOWNLOAD_DIR}
-        tar -xzf ${ARTIFACTS_DOWNLOAD_DIR}/* -C ${ARTIFACTS_DIR}
         ls -R ${ARTIFACTS_DIR}
     - name: Publish PR comment
       uses: EnricoMi/publish-unit-test-result-action@82082dac68ad6a19d980f8ce817e108b9f496c2a # v2.17.1
