@@ -72,7 +72,7 @@ jobs:
       - name: Build Celeritas
         working-directory: build
         run: |
-          ninja
+          ninja -v
       - name: Test Celeritas
         id: test
         run: |

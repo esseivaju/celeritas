@@ -84,7 +84,7 @@
       "inherits": [".ndebug", ".vecgeom", "base"],
       "cacheVariables": {
         "BUILD_TESTING":  {"type": "BOOL", "value": "ON"},
-        "CELERITAS_BUILD_TESTS": {"type": "BOOL", "value": "OFF"}
+        "CELERITAS_BUILD_TESTS": {"type": "BOOL", "value": "ON"}
       }
     }
   ],
