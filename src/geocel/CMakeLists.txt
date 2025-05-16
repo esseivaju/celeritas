@@ -91,6 +91,10 @@ if(CELERITAS_USE_VecGeom)
   list(APPEND PRIVATE_DEPS VecGeom::vecgeom)
 endif()
 
+if(CELERITAS_USE_detray)
+  list(APPEND PRIVATE_DEPS detray::core)
+endif()
+
 #-----------------------------------------------------------------------------#
 # Create library
 #-----------------------------------------------------------------------------#

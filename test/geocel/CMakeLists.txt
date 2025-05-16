@@ -42,6 +42,12 @@ if(CELERITAS_USE_VecGeom)
   )
   list(APPEND PRIVATE_DEPS Celeritas::ExtVecGeom)
 endif()
+if(CELERITAS_USE_detray)
+  list(APPEND SOURCES
+    detray/DetrayTestBase.cc
+    detray/Detray.test.cc
+  )
+endif()
 
 celeritas_add_test_library(testcel_geocel ${SOURCES})
 
@@ -49,6 +55,10 @@ celeritas_target_link_libraries(testcel_geocel
   PUBLIC testcel_harness Celeritas::geocel
   PRIVATE ${PRIVATE_DEPS}
 )
+if(CELERITAS_USE_detray)
+  target_compile_definitions(testcel_geocel PRIVATE DETRAY_ALGEBRA_ARRAY VECMEM_HAVE_PMR_MEMORY_RESOURCE)
+  target_compile_features(testcel_geocel PUBLIC cxx_std_20)
+endif()
 
 #-----------------------------------------------------------------------------#
 # SETUP
