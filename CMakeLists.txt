@@ -34,6 +34,7 @@ endif()
 # Optional dependencies
 # NOTE: when adding a new dependency, update the CMakeConfig "COMPONENTS"
 celeritas_optional_package(covfie "Use Covfie field integrator")
+celeritas_optional_package(detray "Use detray geometry")
 celeritas_optional_package(Geant4 "Enable Geant4 adapter tools")
 celeritas_optional_package(HepMC3 "Enable HepMC3 event record reader")
 celeritas_optional_package(MPI "Enable distributed memory parallelism")
@@ -415,6 +416,10 @@ if(CELERITAS_USE_covfie)
     set(_min_covfie_version 0.13)
   endif()
   celeritas_find_or_builtin_package(covfie ${_min_covfie_version})
+endif()
+
+if(CELERITAS_USE_detray)
+  celeritas_find_or_builtin_package(detray)
 endif()
 
 if(CELERITAS_USE_VecGeom)
