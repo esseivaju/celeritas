@@ -103,7 +103,7 @@ CELER_FUNCTION void StatusCheckExecutor::operator()(CoreTrackView const& track)
         return;
     }
     if (state.order < StepActionOrder::pre
-        || state.order == StepActionOrder::end)
+        || state.order >= StepActionOrder::end)
     {
         // Skip remaining tests since step actions get reset in "pre-step"
         return;

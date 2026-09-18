@@ -113,6 +113,7 @@ char const* to_cstring(StepActionOrder value)
         "post",
         "user_post",
         "end",
+        "user_end",
     };
     return to_cstring_impl(value);
 }

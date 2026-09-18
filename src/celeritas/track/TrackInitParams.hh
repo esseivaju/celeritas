@@ -31,6 +31,7 @@ class TrackInitParams final : public ParamsDataInterface<TrackInitParamsData>
         size_type capacity{};  //!< Max number of initializers
         size_type max_events{};  //!< Max simultaneous events
         TrackOrder track_order{TrackOrder::none};  //!< How to sort tracks
+        bool save_secondaries{false};  //!< Save births for host callbacks
     };
 
   public:

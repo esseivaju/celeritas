@@ -24,6 +24,7 @@
 #include "celeritas/track/ExtendFromPrimariesAction.hh"
 #include "celeritas/track/ExtendFromSecondariesAction.hh"
 #include "celeritas/track/InitializeTracksAction.hh"
+#include "celeritas/track/TrackInitParams.hh"
 
 #include "MockInteractAction.hh"
 #include "celeritas_test.hh"
@@ -150,6 +151,15 @@ template<class T>
 class TrackInitTest : public TrackInitTestBase
 {
   public:
+    SPConstTrackInit build_init() override
+    {
+        TrackInitParams::Input inp;
+        inp.capacity = 4096;
+        inp.max_events = 4096;
+        inp.save_secondaries = true;
+        return std::make_shared<TrackInitParams>(inp);
+    }
+
     // Memspace for this class instance
     static constexpr MemSpace M = T::value;
 
@@ -221,6 +231,42 @@ TYPED_TEST_SUITE(TrackInitTest, MemspaceTypes, MemspaceTypeString);
 //---------------------------------------------------------------------------//
 // TESTS
 //---------------------------------------------------------------------------//
+
+TEST_F(TrackInitTestBase, births_disabled)
+{
+    CoreState<MemSpace::host> state{*this->core(), StreamId{0}, 2};
+    EXPECT_TRUE(state.ref().init.secondary_births.empty());
+}
+
+TYPED_TEST(TrackInitTest, clear_births)
+{
+    this->build_states(2);
+    auto primaries = this->make_primaries(2);
+    this->extend_from_primaries(make_span(primaries));
+    this->init_tracks();
+    MockInteractAction{ActionId{1}, {1, 2}, {false, true}}.step(*this->core(),
+                                                                this->state());
+    ExtendFromSecondariesAction{ActionId{2}}.step(*this->core(), this->state());
+
+    HostVal<TrackInitStateData> init;
+    init = this->state().ref().init;
+    auto count_births = [&] {
+        auto births = init.secondary_births[AllItems<SecondaryBirth>{}];
+        return std::count_if(births.begin(), births.end(), [](auto const& b) {
+            return bool(b);
+        });
+    };
+    EXPECT_EQ(3, count_births());
+
+    this->init_tracks();
+    MockInteractAction{ActionId{1}, {0, 0}, {false, false}}.step(
+        *this->core(), this->state());
+    ExtendFromSecondariesAction{ActionId{2}}.step(*this->core(), this->state());
+    init = this->state().ref().init;
+    EXPECT_EQ(0, count_births());
+    EXPECT_LT(StepActionOrder::end, StepActionOrder::user_end);
+    EXPECT_STREQ("user_end", to_cstring(StepActionOrder::user_end));
+}
 
 //! Test that we can add more primaries than the first allocation
 TYPED_TEST(TrackInitTest, add_more_primaries)
@@ -320,6 +366,29 @@ TYPED_TEST(TrackInitTest, run)
 
     // Launch a kernel to create track initializers from secondaries
     ExtendFromSecondariesAction{ActionId{2}}.step(*this->core(), this->state());
+
+    {
+        HostVal<TrackInitStateData> init;
+        init = this->state().ref().init;
+        std::vector<int> parents;
+        std::vector<int> children;
+        for (auto const& birth :
+             init.secondary_births[AllItems<SecondaryBirth>{}])
+        {
+            if (birth)
+            {
+                parents.push_back(id_to_int(birth.sim.parent_id));
+                children.push_back(id_to_int(birth.sim.track_id));
+                EXPECT_EQ(EventId{0}, birth.sim.event_id);
+                EXPECT_GT(birth.particle.energy.value(), 0);
+            }
+        }
+        std::sort(parents.begin(), parents.end());
+        std::sort(children.begin(), children.end());
+        // Includes four in-place children as well as queued initializers.
+        EXPECT_VEC_EQ((std::vector<int>{2, 3, 6, 7, 10, 10, 11}), parents);
+        EXPECT_VEC_EQ((std::vector<int>{12, 13, 14, 15, 16, 17, 18}), children);
+    }
 
     {
         // Check the vacancies

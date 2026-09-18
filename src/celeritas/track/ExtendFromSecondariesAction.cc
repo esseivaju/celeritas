@@ -8,6 +8,7 @@
 
 #include "corecel/Assert.hh"
 #include "corecel/Macros.hh"
+#include "corecel/data/Filler.hh"
 #include "celeritas/global/ActionLauncher.hh"
 #include "celeritas/global/CoreParams.hh"
 #include "celeritas/global/CoreState.hh"
@@ -56,6 +57,14 @@ void ExtendFromSecondariesAction::step_impl(CoreParams const& core_params,
                                             CoreState<M>& core_state) const
 {
     TrackInitStateData<Ownership::reference, M>& init = core_state.ref().init;
+
+    if (!init.secondary_births.empty())
+    {
+        // Clear stale entries, including holes left by production cuts.
+        Filler<SecondaryBirth, M> clear{SecondaryBirth{},
+                                        core_state.stream_id()};
+        clear(init.secondary_births[AllItems<SecondaryBirth, M>{}]);
+    }
 
     // Launch a kernel to identify which track slots are still alive and count
     // the number of surviving secondaries per track

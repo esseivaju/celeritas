@@ -84,6 +84,7 @@ CELER_FUNCTION void ProcessSecondariesExecutor::operator()(
     // Save the parent ID since it will be overwritten if a secondary is
     // initialized in this slot
     TrackId const track_id{sim.track_id()};
+    size_type const parent_step{sim.num_steps()};
 
     for (auto const& secondary : track.physics_step().secondaries())
     {
@@ -110,6 +111,16 @@ CELER_FUNCTION void ProcessSecondariesExecutor::operator()(
             ti.particle.particle_id = secondary.particle_id;
             ti.particle.energy = secondary.energy;
             CELER_ASSERT(ti);
+
+            if (!data.secondary_births.empty())
+            {
+                auto index = static_cast<size_type>(
+                    &secondary
+                    - state->physics.secondaries.storage.data().get());
+                CELER_ASSERT(index < data.secondary_births.size());
+                data.secondary_births[ItemId<SecondaryBirth>{index}] = {
+                    ti.sim, ti.particle, ti.geo.pos, ti.geo.dir, parent_step};
+            }
 
             if (sim.track_id() == track_id && sim.status() != TrackStatus::alive
                 && params->init.track_order != TrackOrder::init_charge)

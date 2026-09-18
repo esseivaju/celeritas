@@ -37,6 +37,7 @@ struct TrackInitParamsData
 {
     size_type capacity{0};  //!< Track initializer storage size
     size_type max_events{0};  //!< Maximum number of events that can be run
+    bool save_secondaries{false};  //!< Record secondary identities and births
     TrackOrder track_order{TrackOrder::none};  //!< How to sort tracks on
                                                //!< gpu
 
@@ -55,6 +56,7 @@ struct TrackInitParamsData
         CELER_EXPECT(other);
         capacity = other.capacity;
         max_events = other.max_events;
+        save_secondaries = other.save_secondaries;
         track_order = other.track_order;
         return *this;
     }
@@ -77,6 +79,26 @@ struct TrackInitializer
     {
         return sim && geo && particle;
     }
+};
+
+//---------------------------------------------------------------------------//
+/*!
+ * Secondary identity and birth state, independent of transport slot reuse.
+ *
+ * Entries correspond to the physics secondary allocator and are valid only
+ * for surviving secondaries created in the current iteration. The parent step
+ * is captured before in-place initialization can overwrite it.
+ */
+struct SecondaryBirth
+{
+    SimTrackInitializer sim;
+    ParticleTrackInitializer particle;
+    Real3 position{};
+    Real3 direction{};
+    size_type parent_step{};
+
+    //! Whether a surviving secondary was recorded
+    explicit CELER_FUNCTION operator bool() const { return bool(sim); }
 };
 
 //---------------------------------------------------------------------------//
@@ -122,6 +144,9 @@ struct TrackInitStateData
     // CoreStateCounters)
     Items<TrackInitializer> initializers;
 
+    //! Optional birth records indexed by physics secondary allocation
+    Items<SecondaryBirth> secondary_births;
+
     // Maintain the counters here to allow device-resident computation with
     // synchronization between host and device only at the end of a step or
     // when explicitly requested, such as in the tests
@@ -150,6 +175,7 @@ struct TrackInitStateData
 
         vacancies = other.vacancies;
         initializers = other.initializers;
+        secondary_births = other.secondary_births;
         counters = other.counters;
 
         return *this;
@@ -171,7 +197,8 @@ template<MemSpace M>
 void resize(TrackInitStateData<Ownership::value, M>* data,
             HostCRef<TrackInitParamsData> const& params,
             StreamId stream,
-            size_type size)
+            size_type size,
+            size_type secondary_capacity = 0)
 {
     using namespace celeritas::literals;
     CELER_EXPECT(params);
@@ -196,6 +223,13 @@ void resize(TrackInitStateData<Ownership::value, M>* data,
 
     // Reserve space for initializers
     resize(&data->initializers, params.capacity);
+
+    if (params.save_secondaries)
+    {
+        CELER_EXPECT(secondary_capacity > 0);
+        resize(&data->secondary_births, secondary_capacity);
+        fill(SecondaryBirth{}, &data->secondary_births);
+    }
 
     // Initialize the counters for the step to zero
     fill(CoreStateCounters{}, &data->counters);

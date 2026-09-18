@@ -41,6 +41,7 @@ enum class StepActionOrder
     post,  //!< After step
     user_post,  //!< User actions after boundary crossing, collision
     end,  //!< Processing secondaries, including replacing primaries
+    user_end,  //!< Callbacks using saved steps and assigned secondary IDs
     size_
 };
 
