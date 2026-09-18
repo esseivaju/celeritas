@@ -19,6 +19,7 @@
 #include "celeritas/user/DetectorSteps.hh"
 #include "celeritas/user/StepData.hh"
 
+#include "GeantStepReconstruction.hh"
 #include "TouchableUpdaterInterface.hh"
 #include "../GeantTrackReconstruction.hh"
 
@@ -109,32 +110,17 @@ class HitProcessor
     //! Access local Geant4 track metadata reconstruction
     std::shared_ptr<GeantTrackReconstruction> const& track_reconstruction() const
     {
-        return track_reconstruction_;
+        return reconstruction_.track_reconstruction();
     }
 
   private:
     //! Detector volumes for navigation updating
     SPConstVecLV detector_volumes_;
-    StepSelection ss_;
+    GeantStepReconstruction reconstruction_;
     //! Map detector IDs to sensitive detectors
     std::vector<G4VSensitiveDetector*> detectors_;
     //! Temporary CPU hit information
     DetectorStepOutput steps_;
-
-    //! Shared step object
-    std::shared_ptr<G4Step> step_;
-
-    //! Track reconstruction for hit processing
-    std::shared_ptr<GeantTrackReconstruction> track_reconstruction_;
-    //! Step points
-    EnumArray<StepPoint, G4StepPoint*> step_points_{{nullptr, nullptr}};
-
-    //! Geant4 reference-counted pointer to a G4VTouchable
-    EnumArray<StepPoint, G4TouchableHandle> touch_handle_;
-    //! Navigator for finding points
-    std::unique_ptr<TouchableUpdaterInterface> update_touchable_;
-    //! Whether geometry-related step status can be updated
-    bool step_post_status_{false};
 
     //! Accumulated number of hits
     size_type num_hits_{0};
