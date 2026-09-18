@@ -24,6 +24,7 @@
 #include "StepData.hh"
 
 #include "detail/StepScratchCopyExecutor.hh"
+#include "detail/VisitStepFields.hh"
 
 using namespace celeritas::literals;
 
@@ -75,6 +76,7 @@ template<class T>
 void copy_field(DetectorStepOutput::PinnedVec<T>* dst,
                 StateRef<T> const& src,
                 size_type num_valid,
+                size_type,
                 StreamId stream)
 {
     if (src.empty() || num_valid == 0)
@@ -138,43 +140,15 @@ void copy_steps<MemSpace::device>(
         launch_kernel(num_valid, state.stream_id, execute_thread);
     }
 
-    // Resize and copy if the fields are present
-#define DS_ASSIGN(FIELD) \
-    copy_field( \
-        &(output->FIELD), state.scratch.FIELD, num_valid, state.stream_id)
-
-    DS_ASSIGN(detector_id);
-    DS_ASSIGN(track_id);
-
-    for (auto sp : range(StepPoint::size_))
-    {
-        DS_ASSIGN(points[sp].time);
-        DS_ASSIGN(points[sp].pos);
-        DS_ASSIGN(points[sp].dir);
-        DS_ASSIGN(points[sp].energy);
-        DS_ASSIGN(points[sp].volume_id);
-
-        copy_field(&(output->points[sp].volume_instance_ids),
-                   state.scratch.points[sp].volume_instance_ids,
-                   num_valid,
-                   state.num_volume_levels,
-                   state.stream_id);
-    }
-
-    DS_ASSIGN(event_id);
-    DS_ASSIGN(parent_id);
-    DS_ASSIGN(primary_id);
-    DS_ASSIGN(post_step_action_id);
-    DS_ASSIGN(track_step_count);
-    DS_ASSIGN(step_length);
-    DS_ASSIGN(weight);
-    DS_ASSIGN(particle_id);
-    DS_ASSIGN(energy_deposition);
-    DS_ASSIGN(track_status);
+    detail::visit_step_fields(
+        *output,
+        state.scratch,
+        state.num_volume_levels,
+        [&](auto& dst, auto const& src, size_type width) {
+            copy_field(&dst, src, num_valid, width, state.stream_id);
+        });
 
     output->num_volume_levels = state.num_volume_levels;
-
-#undef DS_ASSIGN
 
     // Copies must be complete before returning
     CELER_DEVICE_API_CALL(

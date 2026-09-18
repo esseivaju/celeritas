@@ -6,10 +6,18 @@
 //---------------------------------------------------------------------------//
 #include "celeritas/user/DetectorSteps.hh"
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 #include "corecel/data/ParamsDataStore.hh"
 #include "corecel/data/Ref.hh"
+#include "corecel/sys/DeviceEvent.hh"
+#include "corecel/sys/Stream.hh"
 #include "celeritas/user/StepData.hh"
+#include "celeritas/user/StepSnapshot.hh"
 #include "celeritas/user/detail/StepScratchCopyExecutor.hh"
+#include "celeritas/user/detail/VisitStepFields.hh"
 
 #include "celeritas_test.hh"
 
@@ -32,6 +40,39 @@ std::vector<int> extract_ids(C const& ids)
                    });
     return result;
 }
+
+void expect_output_eq(StepOutput const& expected, StepOutput const& actual)
+{
+    EXPECT_EQ(expected.num_volume_levels, actual.num_volume_levels);
+    detail::visit_step_fields(expected,
+                              actual,
+                              expected.num_volume_levels,
+                              [](auto const& lhs, auto const& rhs, size_type) {
+                                  EXPECT_EQ(lhs, rhs);
+                              });
+}
+
+struct SnapshotStreamGate
+{
+    std::atomic<bool> released{false};
+    std::atomic<bool> timed_out{false};
+
+    static void wait(void* ptr)
+    {
+        auto& gate = *static_cast<SnapshotStreamGate*>(ptr);
+        auto deadline = std::chrono::steady_clock::now()
+                        + std::chrono::seconds(5);
+        while (!gate.released)
+        {
+            if (std::chrono::steady_clock::now() > deadline)
+            {
+                gate.timed_out = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+    }
+};
 
 //---------------------------------------------------------------------------//
 }  // namespace
@@ -168,6 +209,46 @@ class DetectorStepsTest : public ::celeritas::test::Test
         return result;
     }
 
+    void test_snapshot(bool filtered)
+    {
+        auto state = this->build_states(32);
+        if (!filtered)
+            state.data.detector_id = {};
+        auto ref = make_ref(state);
+        StepSnapshot snapshot;
+        EXPECT_EQ(0, snapshot.buffer_size());
+        EXPECT_FALSE(snapshot.pending());
+        EXPECT_THROW(snapshot.capture(ref), RuntimeError);
+        snapshot.initialize(ref);
+        auto bytes = snapshot.buffer_size();
+        EXPECT_GT(bytes, 0);
+        StepOutput expected;
+        copy_steps(&expected, ref);
+        for (int i = 0; i < 3; ++i)
+        {
+            snapshot.capture(ref);
+            EXPECT_TRUE(snapshot.pending());
+            EXPECT_THROW(snapshot.capture(ref), RuntimeError);
+            EXPECT_THROW(snapshot.initialize(ref), RuntimeError);
+            EXPECT_THROW(snapshot.clear(), RuntimeError);
+            expect_output_eq(expected, snapshot.complete());
+            snapshot.clear();
+            EXPECT_EQ(bytes, snapshot.buffer_size());
+        }
+        snapshot.capture(ref);
+        for (auto tid : range(TrackSlotId{state.size()}))
+            state.data.track_id[tid] = {};
+        // Host snapshots own their data, including geometry hierarchies.
+        expect_output_eq(expected, snapshot.complete());
+        snapshot.clear();
+        snapshot.capture(ref);
+        // Ignore stale detector IDs and other fields on inactive slots.
+        EXPECT_FALSE(snapshot.complete());
+        snapshot.clear();
+        EXPECT_FALSE(snapshot.pending());
+        EXPECT_THROW(snapshot.complete(), RuntimeError);
+    }
+
   private:
     ParamsDataStore<StepParamsData> params_;
 };
@@ -186,6 +267,49 @@ class SmallDetectorStepsTest : public DetectorStepsTest
 };
 
 //---------------------------------------------------------------------------//
+
+TEST_F(DetectorStepsTest, snapshot_host)
+{
+    this->test_snapshot(true);
+    this->test_snapshot(false);
+}
+
+TEST_F(SmallDetectorStepsTest, snapshot_host)
+{
+    this->test_snapshot(true);
+}
+
+TEST_F(DetectorStepsTest, TEST_IF_CELER_DEVICE(snapshot_device))
+{
+    auto host = this->build_states(32);
+    DeviceStates dev;
+    resize(&dev, this->params(), StreamId{0}, host.size());
+    dev.data = host.data;
+    auto ref = make_ref(dev);
+    StepSnapshot snapshot;
+    snapshot.initialize(ref);
+    StepOutput expected;
+    copy_steps(&expected, make_ref(host));
+
+    auto& stream = device().stream(StreamId{0});
+    DeviceEvent done{device()};
+    SnapshotStreamGate before;
+    SnapshotStreamGate after;
+    stream.sync();
+    stream.launch_host_func(&SnapshotStreamGate::wait, &before);
+    snapshot.capture(ref);
+    // An accidental wait inside capture will time out the gate.
+    EXPECT_FALSE(before.timed_out);
+    done.record(stream);
+    stream.launch_host_func(&SnapshotStreamGate::wait, &after);
+    before.released = true;
+    done.sync();
+    expect_output_eq(expected, snapshot.complete());
+    snapshot.clear();
+    EXPECT_FALSE(after.timed_out);
+    after.released = true;
+    stream.sync();
+}
 
 TEST_F(DetectorStepsTest, unfiltered)
 {

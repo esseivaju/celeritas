@@ -170,6 +170,7 @@ list(APPEND SOURCES
   track/TrackInitParams.cc
   user/ActionTimes.cc
   user/DetectorSteps.cc
+  user/StepSnapshot.cc
   user/ParticleTallyData.cc
   user/RootStepWriterIO.json.cc
   user/SimpleCalo.cc

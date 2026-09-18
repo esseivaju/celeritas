@@ -13,6 +13,8 @@
 
 #include "StepData.hh"
 
+#include "detail/VisitStepFields.hh"
+
 namespace celeritas
 {
 namespace
@@ -46,7 +48,8 @@ template<class T, class Id>
 void assign_field(DetectorStepOutput::PinnedVec<T>* dst,
                   StateRef<T> const& src,
                   StateRef<Id> const& detector,
-                  size_type size)
+                  size_type size,
+                  size_type)
 
 {
     if (src.empty())
@@ -123,44 +126,15 @@ void copy_steps<MemSpace::host>(
     auto copy_selected = [&](auto const& mask) {
         size_type size = count_num_valid(mask);
 
-        // Resize and copy if the fields are present
-#define DS_ASSIGN(FIELD) \
-    assign_field(&(output->FIELD), state.data.FIELD, mask, size)
-
-        DS_ASSIGN(detector_id);
-        DS_ASSIGN(track_id);
-
-        for (auto sp : range(StepPoint::size_))
-        {
-            DS_ASSIGN(points[sp].time);
-            DS_ASSIGN(points[sp].pos);
-            DS_ASSIGN(points[sp].dir);
-            DS_ASSIGN(points[sp].energy);
-            DS_ASSIGN(points[sp].volume_id);
-            if (state.num_volume_levels > 0)
-            {
-                assign_field(&(output->points[sp].volume_instance_ids),
-                             state.data.points[sp].volume_instance_ids,
-                             mask,
-                             size,
-                             state.num_volume_levels);
-            }
-        }
-
-        DS_ASSIGN(event_id);
-        DS_ASSIGN(parent_id);
-        DS_ASSIGN(primary_id);
-        DS_ASSIGN(post_step_action_id);
-        DS_ASSIGN(track_step_count);
-        DS_ASSIGN(step_length);
-        DS_ASSIGN(weight);
-        DS_ASSIGN(particle_id);
-        DS_ASSIGN(energy_deposition);
-        DS_ASSIGN(track_status);
+        detail::visit_step_fields(
+            *output,
+            state.data,
+            state.num_volume_levels,
+            [&](auto& dst, auto const& src, size_type width) {
+                assign_field(&dst, src, mask, size, width);
+            });
 
         output->num_volume_levels = state.num_volume_levels;
-
-#undef DS_ASSIGN
 
         CELER_ENSURE(output->track_id.size() == size);
     };
