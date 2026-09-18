@@ -44,21 +44,22 @@ struct DetectorStepPointOutput
     PinnedVec<Real3> pos;
     PinnedVec<Real3> dir;
     PinnedVec<Energy> energy;
+    PinnedVec<ImplVolumeId> volume_id;
 
     PinnedVec<VolumeInstanceId> volume_instance_ids;
 };
 
 //---------------------------------------------------------------------------//
 /*!
- * CPU results for many in-detector tracks at a single step iteration.
+ * CPU results for gathered tracks at a single step iteration.
  *
  * This convenience class can be used to postprocess the results from sensitive
  * detectors on CPU. The data members will be available based on the \c
  * selection of the \c StepInterface class that gathered the data.
  *
  * Unlike \c StepStateData, which leaves gaps for inactive or filtered
- * tracks, every entry of these vectors will be valid and correspond to a
- * single DetectorId.
+ * tracks, every entry corresponds to a valid step. When no detector filter is
+ * configured, all active tracks are copied and detector IDs are empty.
  */
 struct DetectorStepOutput
 {
@@ -89,6 +90,7 @@ struct DetectorStepOutput
     // Additional optional data (physics)
     PinnedVec<ParticleId> particle_id;
     PinnedVec<Energy> energy_deposition;
+    PinnedVec<TrackStatus> track_status;
 
     // 2D size for volume instances
     size_type num_volume_levels{0};
@@ -96,13 +98,19 @@ struct DetectorStepOutput
     //// METHODS ////
 
     //! Number of elements in the detector output.
-    size_type size() const { return detector_id.size(); }
+    size_type size() const
+    {
+        return detector_id.empty() ? track_id.size() : detector_id.size();
+    }
     //! Whether the size is nonzero
-    explicit operator bool() const { return !detector_id.empty(); }
+    explicit operator bool() const { return this->size() != 0; }
 };
 
+//! Gathered output for callbacks that are independent of sensitive detectors
+using StepOutput = DetectorStepOutput;
+
 //---------------------------------------------------------------------------//
-// Copy state data for all steps inside detectors to the output.
+// Copy filtered detector steps, or all active steps for an unfiltered collector.
 template<MemSpace M>
 void copy_steps(DetectorStepOutput* output,
                 StepStateData<Ownership::reference, M> const& state);

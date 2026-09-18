@@ -7,6 +7,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "celeritas/Types.hh"
@@ -60,14 +61,15 @@ class StepCollector
   public:
     // Construct and add to core params
     static std::shared_ptr<StepCollector> make_and_insert(
-        CoreParams const& core, VecInterface callbacks);
+        CoreParams const& core, VecInterface callbacks, std::string name = {});
 
     // Construct with options and register pre/post-step actions
     StepCollector(SPConstCoreGeo geo,
                   SPConstVolume volume,
                   VecInterface&& callbacks,
                   AuxParamsRegistry* aux_registry,
-                  ActionRegistry* action_registry);
+                  ActionRegistry* action_registry,
+                  std::string name = {});
 
     // See which data are being gathered
     StepSelection const& selection() const;

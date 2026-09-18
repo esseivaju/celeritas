@@ -6,6 +6,8 @@
 //---------------------------------------------------------------------------//
 #pragma once
 
+#include <string>
+
 #include "corecel/data/AuxInterface.hh"
 #include "corecel/data/AuxParams.hh"
 #include "corecel/data/ParamsDataInterface.hh"
@@ -43,13 +45,14 @@ class StepParams : public AuxParams<StepParamsData, StepStateData>
     StepParams(AuxId aux_id,
                CoreGeoParams const& geo,
                VolumeParams const& volume,
-               VecInterface const& interfaces);
+               VecInterface const& interfaces,
+               std::string const& name = {});
 
     //!@{
     //! \name Aux interface
 
     //! Short name for the aux data
-    std::string_view label() const final { return "detector-step"; }
+    std::string_view label() const final { return label_; }
     //! Index of this class instance in its registry
     AuxId aux_id() const final { return aux_id_; }
     //!@}
@@ -74,6 +77,7 @@ class StepParams : public AuxParams<StepParamsData, StepStateData>
 
   private:
     AuxId aux_id_;
+    std::string label_;
     ParamsDataStore<StepParamsData> mirror_;
 };
 

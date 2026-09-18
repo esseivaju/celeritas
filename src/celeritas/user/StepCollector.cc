@@ -25,16 +25,20 @@ namespace celeritas
 {
 //---------------------------------------------------------------------------//
 /*!
- * Construct and add to core params.
+ * Construct and add to core params, optionally naming a separate collector.
+ *
+ * A nonempty name gives the actions and auxiliary data unique labels, allowing
+ * unfiltered callbacks to coexist with detector-filtered collectors.
  */
 std::shared_ptr<StepCollector> StepCollector::make_and_insert(
-    CoreParams const& core, VecInterface callbacks)
+    CoreParams const& core, VecInterface callbacks, std::string name)
 {
     return std::make_shared<StepCollector>(core.geometry(),
                                            core.volume(),
                                            std::move(callbacks),
                                            core.aux_reg().get(),
-                                           core.action_reg().get());
+                                           core.action_reg().get(),
+                                           std::move(name));
 }
 
 //---------------------------------------------------------------------------//
@@ -45,7 +49,8 @@ StepCollector::StepCollector(SPConstCoreGeo geo,
                              SPConstVolume volume,
                              VecInterface&& callbacks,
                              AuxParamsRegistry* aux_registry,
-                             ActionRegistry* action_registry)
+                             ActionRegistry* action_registry,
+                             std::string name)
 {
     CELER_EXPECT(!callbacks.empty());
     CELER_EXPECT(std::all_of(callbacks.begin(), callbacks.end(), Identity{}));
@@ -55,7 +60,7 @@ StepCollector::StepCollector(SPConstCoreGeo geo,
     CELER_EXPECT(action_registry);
 
     params_ = std::make_shared<detail::StepParams>(
-        aux_registry->next_id(), *geo, *volume, callbacks);
+        aux_registry->next_id(), *geo, *volume, callbacks, name);
     aux_registry->insert(params_);
 
     if (this->selection().points[StepPoint::pre] || params_->has_detectors())
@@ -63,13 +68,13 @@ StepCollector::StepCollector(SPConstCoreGeo geo,
         // Some pre-step data is being gathered
         pre_action_
             = std::make_shared<detail::StepGatherAction<StepPoint::pre>>(
-                action_registry->next_id(), params_, VecInterface{});
+                action_registry->next_id(), params_, VecInterface{}, name);
         action_registry->insert(pre_action_);
     }
 
     // Always add post-step action, and add callbacks to it
     post_action_ = std::make_shared<detail::StepGatherAction<StepPoint::post>>(
-        action_registry->next_id(), params_, std::move(callbacks));
+        action_registry->next_id(), params_, std::move(callbacks), name);
     action_registry->insert(post_action_);
 }
 

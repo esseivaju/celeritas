@@ -41,9 +41,10 @@ using ItemRef
     = celeritas::Collection<T, Ownership::reference, MemSpace::native>;
 
 //---------------------------------------------------------------------------//
-struct HasDetector
+struct HasId
 {
-    CELER_FORCEINLINE_FUNCTION bool operator()(DetectorId const& d)
+    template<class Id>
+    CELER_FORCEINLINE_FUNCTION bool operator()(Id const& d) const
     {
         return static_cast<bool>(d);
     }
@@ -55,13 +56,17 @@ size_type count_num_valid(
 {
     // Store the thread IDs of active tracks that are in a detector
     auto start = device_pointer_cast(state.valid_id.data());
-    auto end
-        = thrust::copy_if(thrust_execute_on(state.stream_id),
-                          thrust::make_counting_iterator(0_sz),
-                          thrust::make_counting_iterator(state.size()),
-                          device_pointer_cast(state.data.detector_id.data()),
-                          start,
-                          HasDetector{});
+    auto copy_ids = [&](auto const& mask) {
+        return thrust::copy_if(thrust_execute_on(state.stream_id),
+                               thrust::make_counting_iterator(0_sz),
+                               thrust::make_counting_iterator(state.size()),
+                               device_pointer_cast(mask.data()),
+                               start,
+                               HasId{});
+    };
+    auto end = state.data.detector_id.empty()
+                   ? copy_ids(state.data.track_id)
+                   : copy_ids(state.data.detector_id);
     return end - start;
 }
 
@@ -147,6 +152,7 @@ void copy_steps<MemSpace::device>(
         DS_ASSIGN(points[sp].pos);
         DS_ASSIGN(points[sp].dir);
         DS_ASSIGN(points[sp].energy);
+        DS_ASSIGN(points[sp].volume_id);
 
         copy_field(&(output->points[sp].volume_instance_ids),
                    state.scratch.points[sp].volume_instance_ids,
@@ -164,6 +170,7 @@ void copy_steps<MemSpace::device>(
     DS_ASSIGN(weight);
     DS_ASSIGN(particle_id);
     DS_ASSIGN(energy_deposition);
+    DS_ASSIGN(track_status);
 
     output->num_volume_levels = state.num_volume_levels;
 
@@ -173,7 +180,8 @@ void copy_steps<MemSpace::device>(
     CELER_DEVICE_API_CALL(
         StreamSynchronize(celeritas::device().stream(state.stream_id).get()));
 
-    CELER_ENSURE(output->detector_id.size() == num_valid);
+    CELER_ENSURE(output->detector_id.empty()
+                 || output->detector_id.size() == num_valid);
     CELER_ENSURE(output->track_id.size() == num_valid);
 }
 

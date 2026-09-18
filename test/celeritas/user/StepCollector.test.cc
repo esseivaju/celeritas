@@ -221,6 +221,30 @@ TEST_F(KnSimpleLoopTestBase, multiple_interfaces)
     EXPECT_EQ(4, mctruth->steps().size());
 }
 
+TEST_F(KnSimpleLoopTestBase, named_collectors)
+{
+    auto core = this->core();
+    auto calo = std::make_shared<SimpleCalo>(
+        std::vector<Label>{"inner"}, 1, *this->volume());
+    auto mctruth = std::make_shared<ExampleMctruth>();
+    auto detector = StepCollector::make_and_insert(*core, {calo});
+    auto observer
+        = StepCollector::make_and_insert(*core, {mctruth}, "observer");
+    EXPECT_TRUE(this->action_reg()->find_action("step-gather-post"));
+    EXPECT_TRUE(this->action_reg()->find_action("observer-step-gather-post"));
+
+    StepperInput inp;
+    inp.params = core;
+    inp.stream_id = StreamId{0};
+    inp.num_track_slots = 2;
+    inp.actions = std::make_shared<ActionSequence>(*this->action_reg(),
+                                                   ActionSequence::Options{});
+    Stepper<MemSpace::host> step{inp};
+    auto primaries = this->make_primaries(2);
+    step(make_span(primaries));
+    EXPECT_EQ(2, mctruth->steps().size());
+}
+
 //---------------------------------------------------------------------------//
 // KLEIN-NISHINA
 //---------------------------------------------------------------------------//

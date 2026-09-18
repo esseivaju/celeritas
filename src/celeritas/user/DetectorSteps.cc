@@ -26,13 +26,12 @@ template<class T>
 using ItemRef
     = celeritas::Collection<T, Ownership::reference, MemSpace::native>;
 
-using DetectorRef = StateRef<DetectorId>;
-
 //---------------------------------------------------------------------------//
-size_type count_num_valid(DetectorRef const& detector)
+template<class Id>
+size_type count_num_valid(StateRef<Id> const& detector)
 {
     size_type size{0};
-    for (DetectorId id : detector[AllItems<DetectorId>{}])
+    for (Id id : detector[AllItems<Id>{}])
     {
         if (id)
         {
@@ -43,10 +42,10 @@ size_type count_num_valid(DetectorRef const& detector)
 }
 
 //---------------------------------------------------------------------------//
-template<class T>
+template<class T, class Id>
 void assign_field(DetectorStepOutput::PinnedVec<T>* dst,
                   StateRef<T> const& src,
-                  DetectorRef const& detector,
+                  StateRef<Id> const& detector,
                   size_type size)
 
 {
@@ -72,10 +71,10 @@ void assign_field(DetectorStepOutput::PinnedVec<T>* dst,
 }
 
 //---------------------------------------------------------------------------//
-template<class T>
+template<class T, class Id>
 void assign_field(DetectorStepOutput::PinnedVec<T>* dst,
                   ItemRef<T> const& src,
-                  DetectorRef const& detector,
+                  StateRef<Id> const& detector,
                   size_type size,
                   size_type per_thread)
 
@@ -120,49 +119,59 @@ void copy_steps<MemSpace::host>(
 
     ScopedProfiling profile_this{"copy-steps"};
 
-    // Get the number of threads that are active and in a detector
-    size_type size = count_num_valid(state.data.detector_id);
+    // Use detector validity when configured, otherwise track validity.
+    auto copy_selected = [&](auto const& mask) {
+        size_type size = count_num_valid(mask);
 
-    // Resize and copy if the fields are present
+        // Resize and copy if the fields are present
 #define DS_ASSIGN(FIELD) \
-    assign_field( \
-        &(output->FIELD), state.data.FIELD, state.data.detector_id, size)
+    assign_field(&(output->FIELD), state.data.FIELD, mask, size)
 
-    DS_ASSIGN(detector_id);
-    DS_ASSIGN(track_id);
+        DS_ASSIGN(detector_id);
+        DS_ASSIGN(track_id);
 
-    for (auto sp : range(StepPoint::size_))
-    {
-        DS_ASSIGN(points[sp].time);
-        DS_ASSIGN(points[sp].pos);
-        DS_ASSIGN(points[sp].dir);
-        DS_ASSIGN(points[sp].energy);
-        if (state.num_volume_levels > 0)
+        for (auto sp : range(StepPoint::size_))
         {
-            assign_field(&(output->points[sp].volume_instance_ids),
-                         state.data.points[sp].volume_instance_ids,
-                         state.data.detector_id,
-                         size,
-                         state.num_volume_levels);
+            DS_ASSIGN(points[sp].time);
+            DS_ASSIGN(points[sp].pos);
+            DS_ASSIGN(points[sp].dir);
+            DS_ASSIGN(points[sp].energy);
+            DS_ASSIGN(points[sp].volume_id);
+            if (state.num_volume_levels > 0)
+            {
+                assign_field(&(output->points[sp].volume_instance_ids),
+                             state.data.points[sp].volume_instance_ids,
+                             mask,
+                             size,
+                             state.num_volume_levels);
+            }
         }
-    }
 
-    DS_ASSIGN(event_id);
-    DS_ASSIGN(parent_id);
-    DS_ASSIGN(primary_id);
-    DS_ASSIGN(post_step_action_id);
-    DS_ASSIGN(track_step_count);
-    DS_ASSIGN(step_length);
-    DS_ASSIGN(weight);
-    DS_ASSIGN(particle_id);
-    DS_ASSIGN(energy_deposition);
+        DS_ASSIGN(event_id);
+        DS_ASSIGN(parent_id);
+        DS_ASSIGN(primary_id);
+        DS_ASSIGN(post_step_action_id);
+        DS_ASSIGN(track_step_count);
+        DS_ASSIGN(step_length);
+        DS_ASSIGN(weight);
+        DS_ASSIGN(particle_id);
+        DS_ASSIGN(energy_deposition);
+        DS_ASSIGN(track_status);
 
-    output->num_volume_levels = state.num_volume_levels;
+        output->num_volume_levels = state.num_volume_levels;
 
 #undef DS_ASSIGN
 
-    CELER_ENSURE(output->detector_id.size() == size);
-    CELER_ENSURE(output->track_id.size() == size);
+        CELER_ENSURE(output->track_id.size() == size);
+    };
+    if (!state.data.detector_id.empty())
+    {
+        copy_selected(state.data.detector_id);
+    }
+    else
+    {
+        copy_selected(state.data.track_id);
+    }
 }
 
 //---------------------------------------------------------------------------//

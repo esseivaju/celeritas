@@ -87,6 +87,7 @@ class DetectorStepsTest : public ::celeritas::test::Test
         result.weight = true;
         result.particle_id = true;
         result.energy_deposition = true;
+        result.track_status = true;
         return result;
     }
 
@@ -158,6 +159,10 @@ class DetectorStepsTest : public ::celeritas::test::Test
                 step.particle_id[tid] = ParticleId(i++);
             if (!step.energy_deposition.empty())
                 step.energy_deposition[tid] = units::MevEnergy(i++);
+            if (!step.track_status.empty())
+                step.track_status[tid] = tid.get() % 2 == 0
+                                             ? TrackStatus::alive
+                                             : TrackStatus::killed;
         }
 
         return result;
@@ -181,6 +186,46 @@ class SmallDetectorStepsTest : public DetectorStepsTest
 };
 
 //---------------------------------------------------------------------------//
+
+TEST_F(DetectorStepsTest, unfiltered)
+{
+    auto states = this->build_states(12);
+    // Remove detector filtering: include active tracks outside detectors.
+    states.data.detector_id = {};
+    StepOutput output;
+    copy_steps(&output, make_ref(states));
+    EXPECT_EQ(9, output.size());
+    EXPECT_EQ(TrackStatus::killed, output.track_status.front());
+    EXPECT_TRUE(output.detector_id.empty());
+    EXPECT_EQ(output.size(), output.points[StepPoint::pre].volume_id.size());
+    EXPECT_EQ(output.size(), output.points[StepPoint::post].volume_id.size());
+
+    for (auto tid : range(TrackSlotId{states.size()}))
+    {
+        states.data.track_id[tid] = {};
+    }
+    copy_steps(&output, make_ref(states));
+    EXPECT_FALSE(output);
+    EXPECT_TRUE(output.points[StepPoint::pre].volume_id.empty());
+}
+
+TEST_F(DetectorStepsTest, TEST_IF_CELER_DEVICE(unfiltered_device))
+{
+    auto host = this->build_states(12);
+    host.data.detector_id = {};
+    DeviceStates dev;
+    resize(&dev, this->params(), StreamId{0}, host.size());
+    dev.data = host.data;
+    StepOutput expected;
+    StepOutput actual;
+    copy_steps(&expected, make_ref(host));
+    copy_steps(&actual, make_ref(dev));
+    EXPECT_VEC_EQ(expected.track_id, actual.track_id);
+    EXPECT_VEC_EQ(expected.track_status, actual.track_status);
+    EXPECT_VEC_EQ(expected.points[StepPoint::pre].volume_id,
+                  actual.points[StepPoint::pre].volume_id);
+    EXPECT_TRUE(actual.detector_id.empty());
+}
 
 TEST_F(DetectorStepsTest, host)
 {

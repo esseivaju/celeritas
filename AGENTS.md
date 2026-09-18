@@ -79,6 +79,11 @@ Object files and tests may have different paths and test names than you expect (
 - Use **only** ASCII characters in CMake/C++/CUDA/shell files
 
 ## Architecture
+Before defining an integration API's scope, identify the existing registration
+and dispatch paths and distinguish the requested general capability from its
+motivating use cases. A use case such as MCTruth must not narrow forwarding of
+registered Geant4 stepping actions to truth-specific callbacks.
+
 Celeritas sets up problems on CPU and executes on GPU *or* CPU with the same code. The `CELER_FUNCTION` macro is `__host__ __device__` when CUDA/HIP is active and decorates runtime functions.
 
 ### Params/States Pattern

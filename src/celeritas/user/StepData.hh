@@ -80,12 +80,14 @@ struct StepSelection
 
     bool particle_id{false};
     bool energy_deposition{false};
+    bool track_status{false};
 
     //! Create StepSelection with all options set to true
     static constexpr StepSelection all()
     {
         return StepSelection{
             {StepPointSelection::all(), StepPointSelection::all()},
+            true,
             true,
             true,
             true,
@@ -103,7 +105,7 @@ struct StepSelection
         return points[StepPoint::pre] || points[StepPoint::post] || event_id
                || parent_id || primary_id || post_step_action_id
                || track_step_count || step_length || weight || particle_id
-               || energy_deposition;
+               || energy_deposition || track_status;
     }
 
     //! Combine the selection with another
@@ -123,6 +125,7 @@ struct StepSelection
         this->weight |= other.weight;
         this->particle_id |= other.particle_id;
         this->energy_deposition |= other.energy_deposition;
+        this->track_status |= other.track_status;
         return *this;
     }
 };
@@ -270,6 +273,7 @@ struct StepStateDataImpl
     // Physics
     StateItems<ParticleId> particle_id;
     StateItems<Energy> energy_deposition;
+    StateItems<TrackStatus> track_status;
 
     //// METHODS ////
 
@@ -285,7 +289,7 @@ struct StepStateDataImpl
                && right_sized(primary_id) && right_sized(post_step_action_id)
                && right_sized(track_step_count) && right_sized(step_length)
                && right_sized(weight) && right_sized(particle_id)
-               && right_sized(energy_deposition);
+               && right_sized(energy_deposition) && right_sized(track_status);
     }
 
     //! State size
@@ -318,6 +322,7 @@ struct StepStateDataImpl
         weight = other.weight;
         particle_id = other.particle_id;
         energy_deposition = other.energy_deposition;
+        track_status = other.track_status;
         return *this;
     }
 };
@@ -470,6 +475,7 @@ inline void resize(StepStateDataImpl<Ownership::value, M>* state,
     SD_RESIZE_IF_SELECTED(weight);
     SD_RESIZE_IF_SELECTED(particle_id);
     SD_RESIZE_IF_SELECTED(energy_deposition);
+    SD_RESIZE_IF_SELECTED(track_status);
 }
 
 //---------------------------------------------------------------------------//

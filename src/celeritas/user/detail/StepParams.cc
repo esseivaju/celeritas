@@ -24,8 +24,9 @@ namespace detail
 StepParams::StepParams(AuxId aux_id,
                        CoreGeoParams const& geo,
                        VolumeParams const& volume_params,
-                       VecInterface const& callbacks)
-    : aux_id_{aux_id}
+                       VecInterface const& callbacks,
+                       std::string const& name)
+    : aux_id_{aux_id}, label_{name.empty() ? "detector-step" : name + "-step"}
 {
     CELER_EXPECT(aux_id_);
 

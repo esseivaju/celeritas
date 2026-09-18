@@ -76,6 +76,7 @@ CELER_FUNCTION void StepScratchCopyExecutor::operator()(ThreadId dst_id)
         DS_COPY_IF_SELECTED(points[sp].pos);
         DS_COPY_IF_SELECTED(points[sp].dir);
         DS_COPY_IF_SELECTED(points[sp].energy);
+        DS_COPY_IF_SELECTED(points[sp].volume_id);
 
         if (auto const& data_vids = state.data.points[sp].volume_instance_ids;
             !data_vids.empty())
@@ -104,6 +105,7 @@ CELER_FUNCTION void StepScratchCopyExecutor::operator()(ThreadId dst_id)
     DS_COPY_IF_SELECTED(weight);
     DS_COPY_IF_SELECTED(particle_id);
     DS_COPY_IF_SELECTED(energy_deposition);
+    DS_COPY_IF_SELECTED(track_status);
 #undef DS_COPY_IF_SELECTED
 }
 

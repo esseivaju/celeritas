@@ -137,6 +137,7 @@ CELER_FUNCTION void StepGatherExecutor<P>::fill(
             SGL_SET_IF_SELECTED(track_step_count, sim.num_steps());
             SGL_SET_IF_SELECTED(step_length, sim.step_length());
             SGL_SET_IF_SELECTED(weight, sim.weight());
+            SGL_SET_IF_SELECTED(track_status, sim.status());
         }
     }
 
