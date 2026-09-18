@@ -6,6 +6,7 @@
 //---------------------------------------------------------------------------//
 #pragma once
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -20,6 +21,7 @@ class G4VUserTrackInformation;
 
 namespace celeritas
 {
+struct SecondaryBirth;
 //---------------------------------------------------------------------------//
 /*!
  * Manage track information for reconstruction.
@@ -65,6 +67,21 @@ class GeantTrackReconstruction
     // Reset primary ID at each event start
     void init_event();
 
+    // Enable persistent, event-local reconstruction before acquiring tracks
+    void enable_track_mapping();
+
+    //! Whether individual Celeritas tracks are reconstructed
+    bool has_track_mapping() const { return track_mapping_; }
+
+    // Restore an individual track (or the legacy primary when disabled)
+    [[nodiscard]] G4Track& view(ParticleId, PrimaryId, TrackId, TrackId parent);
+
+    // Register a secondary before its parent's stepping callback
+    G4Track& insert_secondary(SecondaryBirth const&);
+
+    // Accumulate a completed Celeritas step, at most once per step number
+    void advance(TrackId, size_type step_count, double geant_step_length);
+
     // Restore track information for given primary and particle IDs
     [[nodiscard]] G4Track& view(ParticleId, PrimaryId) const;
 
@@ -86,6 +103,11 @@ class GeantTrackReconstruction
         explicit operator bool() const { return track_id_ >= 0; }
         //! Restore the G4Track from the reconstruction data
         void restore(G4Track&) const;
+        //! Transfer user information to a persistent reconstructed track
+        G4VUserTrackInformation* release_user_info()
+        {
+            return user_info_.release();
+        }
 
       private:
         //! Original Geant4 track ID
@@ -108,6 +130,16 @@ class GeantTrackReconstruction
     PrimaryId start_{0};
     //! Last G4 event ID for error checking
     int g4_event_id_{-1};
+
+    struct TrackEntry
+    {
+        std::unique_ptr<G4Track> track;
+        size_type step_count{};
+    };
+    bool track_mapping_{false};
+    int next_secondary_id_{-1};
+    std::map<PrimaryId, std::unique_ptr<G4Track>> pending_tracks_;
+    std::map<TrackId, TrackEntry> mapped_tracks_;
 };
 
 //---------------------------------------------------------------------------//

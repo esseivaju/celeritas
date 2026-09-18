@@ -22,7 +22,10 @@
 
 #include "corecel/Assert.hh"
 #include "corecel/io/Logger.hh"
+#include "geocel/g4/Convert.hh"
 #include "celeritas/Types.hh"
+#include "celeritas/UnitTypes.hh"
+#include "celeritas/track/TrackInitData.hh"
 
 namespace celeritas
 {
@@ -172,6 +175,8 @@ void GeantTrackReconstruction::clear()
         track->SetUserInformation(nullptr);
     }
     g4_track_data_.clear();
+    pending_tracks_.clear();
+    mapped_tracks_.clear();
 }
 
 //---------------------------------------------------------------------------//
@@ -184,7 +189,9 @@ void GeantTrackReconstruction::clear()
 void GeantTrackReconstruction::init_event()
 {
     CELER_EXPECT(g4_track_data_.empty());
+    CELER_EXPECT(mapped_tracks_.empty() && pending_tracks_.empty());
     start_ = PrimaryId(0);
+    next_secondary_id_ = -1;
     if constexpr (CELERITAS_DEBUG)
     {
         g4_event_id_ = get_current_event_id();
@@ -208,7 +215,139 @@ PrimaryId GeantTrackReconstruction::acquire(G4Track& primary)
     }
     auto primary_id = start_ + g4_track_data_.size();
     g4_track_data_.emplace_back(AcquiredData{primary});
+    if (track_mapping_)
+    {
+        CELER_VALIDATE(primary.GetTrackID() > 0,
+                       << "registered Geant4 tracks must have positive IDs");
+        auto track = std::make_unique<G4Track>(primary);
+        auto& saved = g4_track_data_.back();
+        saved.restore(*track);
+        saved.release_user_info();
+        // Geant4's copy constructor resets transport counters.
+        track->AddTrackLength(
+            primary.GetTrackLength() - track->GetTrackLength());
+        while (track->GetCurrentStepNumber() < primary.GetCurrentStepNumber())
+        {
+            track->IncrementCurrentStepNumber();
+        }
+        pending_tracks_.emplace(primary_id, std::move(track));
+    }
     return primary_id;
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Enable individual track ownership and metadata persistence.
+ *
+ * This must precede acquiring any tracks. Each reconstructed track owns its
+ * user information, just as in Geant4. The map belongs to the current framework
+ * event and is cleared only after transport and callbacks have been drained.
+ */
+void GeantTrackReconstruction::enable_track_mapping()
+{
+    CELER_EXPECT(g4_track_data_.empty() && mapped_tracks_.empty());
+    track_mapping_ = true;
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Bind an offloaded primary or retrieve a previously registered descendant.
+ */
+G4Track& GeantTrackReconstruction::view(
+    ParticleId particle, PrimaryId primary, TrackId id, TrackId parent)
+{
+    if (!track_mapping_)
+    {
+        return this->view(particle, primary);
+    }
+    CELER_EXPECT(id && particle < tracks_.size());
+    auto iter = mapped_tracks_.find(id);
+    if (iter == mapped_tracks_.end())
+    {
+        CELER_VALIDATE(!parent,
+                       << "missing secondary birth for track " << id.get());
+        auto pending = pending_tracks_.find(primary);
+        CELER_VALIDATE(pending != pending_tracks_.end(),
+                       << "missing offloaded primary "
+                       << primary.unchecked_get());
+        iter = mapped_tracks_
+                   .emplace(id, TrackEntry{std::move(pending->second), 0})
+                   .first;
+        pending_tracks_.erase(pending);
+    }
+    auto& track = *iter->second.track;
+    CELER_VALIDATE(track.GetParticleDefinition()
+                       == tracks_[particle.get()]->GetParticleDefinition(),
+                   << "particle type changed for reconstructed track "
+                   << id.get());
+    track.SetStep(step_.get());
+    step_->SetTrack(&track);
+    return track;
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Create a persistent secondary with an event-unique negative Geant4 ID.
+ *
+ * IDs are not reused across flushes. User information starts empty: callbacks
+ * can attach experiment-specific information, which cannot be cloned
+ * generically.
+ */
+G4Track& GeantTrackReconstruction::insert_secondary(SecondaryBirth const& birth)
+{
+    CELER_EXPECT(track_mapping_ && birth);
+    auto parent = mapped_tracks_.find(birth.sim.parent_id);
+    CELER_VALIDATE(parent != mapped_tracks_.end(),
+                   << "missing reconstructed parent");
+    CELER_VALIDATE(mapped_tracks_.count(birth.sim.track_id) == 0,
+                   << "duplicate secondary birth");
+    CELER_VALIDATE(next_secondary_id_ > std::numeric_limits<int>::min(),
+                   << "Geant4 secondary ID range exhausted");
+    auto particle = birth.particle.particle_id;
+    CELER_EXPECT(particle < tracks_.size());
+    auto track = std::make_unique<G4Track>(
+        new G4DynamicParticle(
+            tracks_[particle.get()]->GetParticleDefinition(),
+            to_g4vector(static_array_cast<double>(birth.direction)),
+            birth.particle.energy.value()),
+        native_to_geant<units::ClhepTime>(birth.sim.time),
+        native_to_geant<units::ClhepLength>(
+            static_array_cast<double>(birth.position)));
+    track->SetTrackID(next_secondary_id_--);
+    track->SetParentID(parent->second.track->GetTrackID());
+    track->SetWeight(birth.sim.weight);
+    track->SetVertexPosition(track->GetPosition());
+    track->SetVertexMomentumDirection(track->GetMomentumDirection());
+    track->SetVertexKineticEnergy(track->GetKineticEnergy());
+    auto result = mapped_tracks_.emplace(birth.sim.track_id,
+                                         TrackEntry{std::move(track), 0});
+    return *result.first->second.track;
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Update counters once for a completed step, with length in Geant4 units.
+ *
+ * Both hit and user-action reconstruction can call this for the same step.
+ * Advancing twice is a no-op; skipping or reversing steps is an error.
+ */
+void GeantTrackReconstruction::advance(
+    TrackId id, size_type count, double length)
+{
+    CELER_EXPECT(track_mapping_);
+    auto& entry = mapped_tracks_.at(id);
+    if (entry.step_count == count)
+    {
+        return;
+    }
+    CELER_VALIDATE(count == entry.step_count + 1,
+                   << "out-of-order step for reconstructed track " << id.get());
+    CELER_VALIDATE(
+        entry.track->GetCurrentStepNumber() < std::numeric_limits<int>::max(),
+        << "Geant4 step number range exhausted");
+    entry.track->IncrementCurrentStepNumber();
+    entry.track->AddTrackLength(length);
+    entry.step_count = count;
 }
 
 //---------------------------------------------------------------------------//

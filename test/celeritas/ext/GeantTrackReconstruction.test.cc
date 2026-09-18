@@ -22,6 +22,7 @@
 #include "corecel/Types.hh"
 #include "celeritas/SimpleCmsTestBase.hh"
 #include "celeritas/phys/PDGNumber.hh"
+#include "celeritas/track/TrackInitData.hh"
 
 #include "celeritas_test.hh"
 
@@ -39,6 +40,16 @@ class MockUserTrackInformation : public G4VUserTrackInformation
 
   private:
     int value_;
+};
+
+class CountedTrackInformation : public G4VUserTrackInformation
+{
+  public:
+    explicit CountedTrackInformation(int* count) : count_(count) {}
+    ~CountedTrackInformation() override { ++*count_; }
+
+  private:
+    int* count_;
 };
 
 // Simple mock pointer class to test process pointer storage/restoration
@@ -188,6 +199,87 @@ TEST_F(GtrTest, primary_registration)
     EXPECT_EQ(1, primary_id2.unchecked_get());
 
     recon.clear();
+}
+
+TEST_F(GtrTest, persistent_tracks)
+{
+    GeantTrackReconstruction recon(particles_, step_);
+    EXPECT_FALSE(recon.has_track_mapping());
+    recon.enable_track_mapping();
+    EXPECT_TRUE(recon.has_track_mapping());
+    recon.init_event();
+
+    int destroyed = 0;
+    G4Track primary(
+        new G4DynamicParticle(particles_[0], {0, 0, 1}, 10), 2, {1, 2, 3});
+    primary.SetTrackID(42);
+    primary.SetParentID(7);
+    primary.SetVertexPosition({4, 5, 6});
+    primary.AddTrackLength(12);
+    primary.IncrementCurrentStepNumber();
+    primary.IncrementCurrentStepNumber();
+    primary.SetUserInformation(new CountedTrackInformation(&destroyed));
+    auto pid = recon.acquire(primary);
+    auto& root = recon.view(ParticleId{0}, pid, TrackId{0}, {});
+    EXPECT_EQ(42, root.GetTrackID());
+    EXPECT_EQ(7, root.GetParentID());
+    EXPECT_EQ(primary.GetVertexPosition(), root.GetVertexPosition());
+    EXPECT_EQ(12, root.GetTrackLength());
+    EXPECT_EQ(2, root.GetCurrentStepNumber());
+    EXPECT_EQ(nullptr, primary.GetUserInformation());
+    ASSERT_NE(nullptr, root.GetUserInformation());
+
+    recon.advance(TrackId{0}, 1, 3);
+    recon.advance(TrackId{0}, 1, 3);
+    EXPECT_EQ(15, root.GetTrackLength());
+    EXPECT_EQ(3, root.GetCurrentStepNumber());
+    EXPECT_THROW(recon.advance(TrackId{0}, 3, 1), RuntimeError);
+
+    SecondaryBirth birth;
+    birth.sim.track_id = TrackId{1};
+    birth.sim.parent_id = TrackId{0};
+    birth.sim.primary_id = pid;
+    birth.sim.event_id = EventId{0};
+    birth.sim.weight = 0.5;
+    birth.particle = {ParticleId{1}, units::MevEnergy{2}};
+    birth.direction = {1, 0, 0};
+    auto& child = recon.insert_secondary(birth);
+    EXPECT_EQ(-1, child.GetTrackID());
+    EXPECT_EQ(42, child.GetParentID());
+    EXPECT_EQ(0.5, child.GetWeight());
+    EXPECT_EQ(nullptr, child.GetUserInformation());
+    child.SetUserInformation(new CountedTrackInformation(&destroyed));
+    EXPECT_EQ(&child, &recon.view(ParticleId{1}, pid, TrackId{1}, TrackId{0}));
+    EXPECT_THROW(recon.insert_secondary(birth), RuntimeError);
+
+    birth.sim.track_id = TrackId{2};
+    auto& sibling = recon.insert_secondary(birth);
+    EXPECT_EQ(-2, sibling.GetTrackID());
+    EXPECT_EQ(nullptr, sibling.GetUserInformation());
+    birth.sim.track_id = TrackId{3};
+    birth.sim.parent_id = TrackId{1};
+    auto& grandchild = recon.insert_secondary(birth);
+    EXPECT_EQ(-3, grandchild.GetTrackID());
+    EXPECT_EQ(-1, grandchild.GetParentID());
+    EXPECT_THROW((void)recon.view(ParticleId{1}, pid, TrackId{4}, TrackId{1}),
+                 RuntimeError);
+    EXPECT_EQ(0, destroyed);
+    recon.clear();
+    EXPECT_EQ(2, destroyed);
+
+    // A flush does not restart secondary IDs, but a new event does.
+    for (int expected : {-4, -1})
+    {
+        pid = recon.acquire(primary);
+        (void)recon.view(ParticleId{0}, pid, TrackId{10}, {});
+        birth.sim.track_id = TrackId{11};
+        birth.sim.parent_id = TrackId{10};
+        birth.sim.primary_id = pid;
+        EXPECT_EQ(expected, recon.insert_secondary(birth).GetTrackID());
+        recon.clear();
+        ++test_cur_event;
+        recon.init_event();
+    }
 }
 
 //---------------------------------------------------------------------------//
