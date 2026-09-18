@@ -6,8 +6,13 @@
 //---------------------------------------------------------------------------//
 #include "celeritas/global/Stepper.hh"
 
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <random>
+#include <stdexcept>
+#include <thread>
 
 #include "corecel/Config.hh"
 
@@ -20,6 +25,9 @@
 #include "corecel/io/Logger.hh"
 #include "corecel/random/engine/RngEngine.hh"
 #include "corecel/sys/ActionRegistry.hh"
+#include "corecel/sys/Stopwatch.hh"
+#include "corecel/sys/Stream.hh"
+#include "corecel/sys/StreamTestUtils.hh"
 #include "geocel/UnitUtils.hh"
 #include "celeritas/InvalidOrangeTestBase.hh"
 #include "celeritas/SimpleTestBase.hh"
@@ -261,8 +269,16 @@ class CompletionAction final : public CoreStepActionInterface,
     {
     }
     StepActionOrder order() const final { return order_; }
-    void step(CoreParams const&, CoreStateHost&) const final {}
-    void step(CoreParams const&, CoreStateDevice&) const final {}
+    void step(CoreParams const&, CoreStateHost&) const final
+    {
+        if (on_step)
+            on_step();
+    }
+    void step(CoreParams const&, CoreStateDevice&) const final
+    {
+        if (on_step)
+            on_step();
+    }
     void complete_step(CoreParams const&, CoreStateHost& state) const final
     {
         this->complete(state.warming_up());
@@ -272,6 +288,9 @@ class CompletionAction final : public CoreStepActionInterface,
         this->complete(state.warming_up());
     }
 
+    std::function<void()> on_step;
+    std::function<void()> on_complete;
+
   private:
     StepActionOrder order_;
     std::vector<int>* calls_;
@@ -279,13 +298,26 @@ class CompletionAction final : public CoreStepActionInterface,
     void complete(bool warming_up) const
     {
         if (!warming_up)
+        {
             calls_->push_back(static_cast<int>(order_));
+            if (on_complete)
+                on_complete();
+        }
     }
 };
 
 class CompletionStepperTest : public AsyncStepperTest
 {
   public:
+    std::shared_ptr<CompletionAction> add_action(StepActionOrder order,
+                                                 std::vector<int>* calls)
+    {
+        auto result = std::make_shared<CompletionAction>(
+            this->action_reg()->next_id(), order, calls);
+        this->action_reg()->insert(result);
+        return result;
+    }
+
     template<MemSpace M>
     void run()
     {
@@ -323,6 +355,63 @@ class CompletionStepperTest : public AsyncStepperTest
         step.get();
         EXPECT_EQ(4, calls.size());
     }
+
+    template<MemSpace M>
+    void test_failure(bool submission)
+    {
+        std::vector<int> calls;
+        this->add_action(StepActionOrder::user_post, &calls);
+        auto failure = this->add_action(StepActionOrder::user_end, &calls);
+        std::atomic<bool> drained{false};
+        auto throw_error = [&] {
+            if constexpr (M == MemSpace::device)
+            {
+                device()
+                    .stream(StreamId{0})
+                    .launch_host_func(
+                        [](void* arg) {
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(20));
+                            *static_cast<std::atomic<bool>*>(arg) = true;
+                        },
+                        &drained);
+            }
+            else
+            {
+                drained = true;
+            }
+            throw std::logic_error("injected callback pipeline failure");
+        };
+        (submission ? failure->on_step : failure->on_complete) = throw_error;
+        Stepper<M> step(this->make_stepper_input(4));
+        auto primaries = this->make_primaries(2);
+        if (submission)
+        {
+            EXPECT_THROW(step.async(make_span(primaries)), std::logic_error);
+            EXPECT_FALSE(step.valid());
+        }
+        else
+        {
+            step.async(make_span(primaries));
+            step.push_primary(primaries.front());
+            step.stage_primaries();
+            EXPECT_THROW(step.get(), std::logic_error);
+            EXPECT_TRUE(step.valid());
+        }
+        EXPECT_TRUE(drained);
+        EXPECT_EQ(submission ? 0 : 2, calls.size());
+        EXPECT_THROW(step.get(), std::logic_error);
+        EXPECT_THROW(step.get(), std::logic_error);
+        EXPECT_THROW(step.async(), std::logic_error);
+        EXPECT_THROW(step.async(make_span(primaries)), std::logic_error);
+        EXPECT_THROW(step.push_primary(primaries.front()), std::logic_error);
+        EXPECT_THROW(step.stage_primaries(), std::logic_error);
+        EXPECT_THROW(step.warm_up(), std::logic_error);
+        EXPECT_THROW(step.reset_state(), std::logic_error);
+        EXPECT_THROW(step.reseed(UniqueEventId{1}), std::logic_error);
+        EXPECT_THROW(step.kill_active(), std::logic_error);
+        EXPECT_EQ(submission ? 0 : 2, calls.size());
+    }
 };
 
 TEST_F(CompletionStepperTest, host)
@@ -333,6 +422,84 @@ TEST_F(CompletionStepperTest, host)
 TEST_F(CompletionStepperTest, TEST_IF_CELER_DEVICE(device))
 {
     this->run<MemSpace::device>();
+}
+
+TEST_F(CompletionStepperTest, completion_failure)
+{
+    this->test_failure<MemSpace::host>(false);
+}
+
+TEST_F(CompletionStepperTest, submission_failure)
+{
+    this->test_failure<MemSpace::host>(true);
+}
+
+TEST_F(CompletionStepperTest, TEST_IF_CELER_DEVICE(completion_failure_device))
+{
+    this->test_failure<MemSpace::device>(false);
+}
+
+TEST_F(CompletionStepperTest, TEST_IF_CELER_DEVICE(submission_failure_device))
+{
+    this->test_failure<MemSpace::device>(true);
+}
+
+TEST_F(CompletionStepperTest, completion_timing)
+{
+    std::vector<int> calls;
+    auto action = this->add_action(StepActionOrder::user_post, &calls);
+    action->on_complete
+        = [] { std::this_thread::sleep_for(std::chrono::milliseconds(10)); };
+    auto inp = this->make_stepper_input(4);
+    ActionSequence::Options opts;
+    opts.action_times = ActionTimes::make_and_insert(
+        this->action_reg(), this->aux_reg(), "action-times");
+    opts.step_times = StepTimes::make_and_insert(this->aux_reg(), "step-times");
+    inp.actions = std::make_shared<ActionSequence>(*this->action_reg(), opts);
+    Stepper<MemSpace::host> step(inp);
+    auto primaries = this->make_primaries(2);
+    step.async(make_span(primaries));
+    auto const& aux = step.state().aux();
+    double before
+        = opts.action_times->state(aux).accum_time[action->action_id().get()];
+    double step_before = opts.step_times->state(aux).time.back();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_EQ(
+        before,
+        opts.action_times->state(aux).accum_time[action->action_id().get()]);
+    EXPECT_EQ(step_before, opts.step_times->state(aux).time.back());
+    Stopwatch complete_time;
+    step.get();
+    auto elapsed = complete_time();
+    EXPECT_GE(
+        opts.action_times->state(aux).accum_time[action->action_id().get()]
+            - before,
+        0.01);
+    EXPECT_GE(opts.step_times->state(aux).time.back() - step_before, 0.01);
+    EXPECT_LE(opts.step_times->state(aux).time.back() - step_before, elapsed);
+}
+
+TEST_F(CompletionStepperTest, TEST_IF_CELER_DEVICE(completion_event_boundary))
+{
+    std::vector<int> calls;
+    this->add_action(StepActionOrder::user_end, &calls);
+    Stepper<MemSpace::device> step(this->make_stepper_input(4));
+    auto primaries = this->make_primaries(2);
+    step.async(make_span(primaries));
+    step.push_primary(primaries.front());
+    step.stage_primaries();
+    auto& stream = device().stream(StreamId{0});
+    StreamTestGate later_work;
+    stream.launch_host_func(&StreamTestGate::wait, &later_work);
+    // Consuming the earlier result must not wait for later stream work.
+    EXPECT_NO_THROW(step.get());
+    EXPECT_FALSE(later_work.timed_out);
+    EXPECT_EQ(1, calls.size());
+    later_work.released = true;
+    stream.sync();
+    step.async();
+    step.get();
+    EXPECT_EQ(2, calls.size());
 }
 
 #define BadGeometryTest TEST_IF_CELERITAS_ORANGE(BadGeometryTest)

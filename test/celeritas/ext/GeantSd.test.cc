@@ -6,6 +6,7 @@
 //---------------------------------------------------------------------------//
 #include "celeritas/ext/GeantSd.hh"
 
+#include <stdexcept>
 #include <G4LogicalVolume.hh>
 #include <G4LogicalVolumeStore.hh>
 #include <G4NistManager.hh>
@@ -37,6 +38,27 @@ namespace celeritas
 {
 namespace test
 {
+namespace
+{
+class ThrowingDetector final : public G4VSensitiveDetector
+{
+  public:
+    ThrowingDetector() : G4VSensitiveDetector("throwing-detector") {}
+    int calls{0};
+    bool ProcessHits(G4Step*, G4TouchableHistory*) final
+    {
+        ++calls;
+        throw std::logic_error("sensitive detector failed");
+    }
+};
+
+struct RestoreDetector
+{
+    G4LogicalVolume* volume;
+    G4VSensitiveDetector* detector;
+    ~RestoreDetector() { volume->SetSensitiveDetector(detector); }
+};
+}  // namespace
 //---------------------------------------------------------------------------//
 class SimpleCmsTest : public SensDetTestBase, public SimpleCmsTestBase
 {
@@ -116,9 +138,15 @@ class SimpleCmsTest : public SensDetTestBase, public SimpleCmsTestBase
     }
 
     template<MemSpace M>
-    void test_async()
+    void test_async(bool throw_hit = false)
     {
         this->disable_status_checker();
+        ThrowingDetector failing;
+        auto* volume = const_cast<G4LogicalVolume*>(
+            this->detectors().at("em_calorimeter")->lv());
+        RestoreDetector restore{volume, volume->GetSensitiveDetector()};
+        if (throw_hit)
+            volume->SetSensitiveDetector(&failing);
         auto manager = std::make_shared<GeantSd>(this->make_hit_manager());
         auto collector
             = StepCollector::make_and_insert(*this->core(), {manager});
@@ -150,6 +178,16 @@ class SimpleCmsTest : public SensDetTestBase, public SimpleCmsTestBase
             step.wait();
             EXPECT_TRUE(hits.energy_deposition.empty());
         }
+        if (throw_hit)
+        {
+            EXPECT_EQ(0, failing.calls);
+            EXPECT_THROW(step.get(), std::logic_error);
+            EXPECT_EQ(1, failing.calls);
+            EXPECT_THROW(step.get(), std::logic_error);
+            EXPECT_THROW(step.async(), std::logic_error);
+            EXPECT_EQ(1, failing.calls);
+            return;
+        }
         step.get();
         EXPECT_EQ(1, hits.energy_deposition.size());
     }
@@ -171,6 +209,16 @@ TEST_F(SimpleCmsTest, async_host)
 TEST_F(SimpleCmsTest, TEST_IF_CELER_DEVICE(async_device))
 {
     this->test_async<MemSpace::device>();
+}
+
+TEST_F(SimpleCmsTest, async_failure)
+{
+    this->test_async<MemSpace::host>(true);
+}
+
+TEST_F(SimpleCmsTest, TEST_IF_CELER_DEVICE(async_failure_device))
+{
+    this->test_async<MemSpace::device>(true);
 }
 
 TEST_F(SimpleCmsTest, persistent_selection)

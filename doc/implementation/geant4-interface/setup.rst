@@ -55,7 +55,14 @@ actions also receive zero-deposition steps, steps in non-sensitive volumes,
 boundary steps, and terminal steps. Inactive slots and warmup iterations do not
 produce callbacks.
 
-Callbacks execute synchronously on the owning Geant4 worker. Each track's steps
+Callbacks execute on the owning Geant4 worker when ``Stepper::get()`` consumes
+the completed iteration. This applies to both CPU and GPU transport:
+``async()`` captures data, ``ready()`` polls transport and transfer completion,
+and ``wait()`` waits for that completion. Neither polling nor waiting invokes
+Geant4 callbacks. The synchronous stepping wrappers still submit and immediately
+consume the result.
+
+Each track's steps
 retain their order, and a parent's creation-step callback precedes its children's
 step callbacks. Ordering between unrelated tracks is unspecified and differs
 from Geant4's sequential track scheduling.
@@ -91,6 +98,13 @@ Consumers must copy values they need beyond the callback; step objects and
 touchable contents are reused. Cleanup and event transitions occur only after
 transport and callbacks finish.
 
+Only one iteration can be pending per worker. Applications may stage a later
+primary batch while that iteration is pending. Normal callback completion waits
+for the producing step's event, not subsequent stream work. ``get()`` must be
+called on the owning worker before the next iteration, normal flush cleanup,
+or an event transition. Calling ``wait()`` alone does not deliver callbacks;
+destructors do not invoke them or add implicit synchronization.
+
 Supported effects and limits
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -98,9 +112,13 @@ Actions may observe the reconstructed state, write external output, and attach
 or update user metadata. Transport-state changes, including killing,
 suspension, postponement, changing kinematics or weights, and editing secondary
 transport state, raise an error. The check occurs after the complete global and
-regional chain. Callback exceptions propagate; an undelivered batch cannot be
-silently overwritten by a subsequent capture. Recovery or replay after callback
-failure is not supported.
+regional chain. Callback exceptions propagate and permanently disable further
+transport on that stepper. Repeated ``get()`` calls rethrow the saved exception
+without repeating previously delivered sensitive-detector or stepping-action
+callbacks. An undelivered batch cannot be overwritten. Submission failures also
+disable reuse. Error cleanup finishes outstanding stream transfers before
+propagating the failure so their buffers can be safely destroyed; it does not
+dispatch a partial batch. Recovery or replay after failure is not supported.
 
 This is a reconstruction interface, not a live Geant4 stepping manager.
 Tracking-action lifecycle emulation, cumulative secondary history, and process
@@ -118,16 +136,29 @@ Implementation and cost
 A separately named, unfiltered collector saves completed steps at ``user_post``,
 before transport slots can be reused. Secondary initialization emits optional
 birth records at ID assignment, including children placed directly in a killed
-parent's slot. A ``user_end`` action transfers these records and dispatches the
-callbacks before the next transport iteration. Step and birth transfers use
-pinned host buffers on the producing stream and wait for completion before
-reconstruction.
+parent's slot. A ``user_end`` action transfers these records after IDs have been
+assigned. Sensitive-detector snapshots and unfiltered stepping snapshots use
+separate reusable pinned buffers, allocated before transport starts.
 
-Enabling forwarding adds full-step collection, host/device synchronization,
+Capture copies the selected full-capacity slot arrays on the producing stream,
+without a host count query or a stream wait. The step-completion event follows
+all step and birth transfers. After this event completes, host filtering removes
+inactive and detector-filtered slots in place and reconstruction dispatches the
+callbacks in their established order. Warmup retires empty batches without
+calling Geant4.
+
+Enabling forwarding adds full-step collection and transfer, host filtering,
 touchable reconstruction, persistent host tracks, and user callback costs.
-It can substantially reduce GPU throughput. The default disabled configuration
+Full-capacity transfers trade bandwidth on sparse iterations for predictable
+capture without a device compaction count roundtrip. Existing transport counter
+synchronization, diagnostic synchronization, and unrelated step consumers can
+still block ``async()``. Action and step timing include callback execution but
+exclude application work between submission and consumption.
+
+The default disabled configuration
 creates no callback collector, worker processor, snapshot buffers, or secondary
-birth buffers.
+birth buffers. Sensitive-detector snapshot buffers remain conditional on
+sensitive-detector forwarding. Optical-loop forwarding is unchanged.
 
 .. doxygenclass:: celeritas::GeantSteppingAction
 

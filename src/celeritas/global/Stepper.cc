@@ -147,6 +147,7 @@ Stepper<M>::~Stepper() = default;
 template<MemSpace M>
 void Stepper<M>::warm_up()
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(!valid_, << "cannot warm up with a pending step");
     CELER_VALIDATE(!this->has_queued_primaries(),
                    << "cannot warm up with queued primaries");
@@ -156,9 +157,18 @@ void Stepper<M>::warm_up()
     ScopedProfiling profile_this{"warmup"};
     state_->warming_up(true);
     ScopeExit on_exit_{[this] { state_->warming_up(false); }};
-    actions_->step(*params_, *state_);
-    CELER_ENSURE(state_->sync_get_counters().num_active == 0);
-    actions_->complete_step(*params_, *state_);
+    try
+    {
+        actions_->step(*params_, *state_);
+        // This wait is required in release builds as well as debug builds.
+        CELER_VALIDATE(state_->sync_get_counters().num_active == 0,
+                       << "active tracks during warmup");
+        actions_->complete_step(*params_, *state_);
+    }
+    catch (...)
+    {
+        this->fail();
+    }
 }
 
 //---------------------------------------------------------------------------//
@@ -179,36 +189,43 @@ void Stepper<M>::warm_up()
 template<MemSpace M>
 void Stepper<M>::async()
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(
         !valid_,
         << "cannot start a step before the current step has been consumed");
 
     ScopedProfiling profile_this{"step"};
-    auto counters = state_->sync_get_counters();
-    counters.num_generated = 0;
-    counters.num_cut = 0;
-    counters.num_errored = 0;
-    state_->sync_put_counters(counters);
-    actions_->step(*params_, *state_);
-    if (primary_phase_ == PrimaryPhase::staged)
+    try
     {
-        // The action sequence has enqueued work that consumes the staged input,
-        // but its host source remains protected until the H2D copy completes.
-        primary_phase_ = PrimaryPhase::submitted;
-    }
+        auto counters = state_->sync_get_counters();
+        counters.num_generated = 0;
+        counters.num_cut = 0;
+        counters.num_errored = 0;
+        state_->sync_put_counters(counters);
+        actions_->step(*params_, *state_);
+        if (primary_phase_ == PrimaryPhase::staged)
+        {
+            // Retain the submitted source until its H2D copy completes.
+            primary_phase_ = PrimaryPhase::submitted;
+        }
 
-    if constexpr (M == MemSpace::device)
-    {
-        auto const* counters_ptr = static_cast<CoreStateCounters const*>(
-            state_->ref().init.counters.data());
-        Copier<CoreStateCounters, MemSpace::host> copy_counters{
-            make_span(result_counters_), state_->stream_id()};
-        copy_counters(MemSpace::device, {counters_ptr, 1});
-        step_done_.record(celeritas::device().stream(state_->stream_id()));
+        if constexpr (M == MemSpace::device)
+        {
+            auto const* counters_ptr = static_cast<CoreStateCounters const*>(
+                state_->ref().init.counters.data());
+            Copier<CoreStateCounters, MemSpace::host> copy_counters{
+                make_span(result_counters_), state_->stream_id()};
+            copy_counters(MemSpace::device, {counters_ptr, 1});
+            step_done_.record(celeritas::device().stream(state_->stream_id()));
+        }
+        else
+        {
+            result_counters_.front() = state_->sync_get_counters();
+        }
     }
-    else
+    catch (...)
     {
-        result_counters_.front() = state_->sync_get_counters();
+        this->fail();
     }
     valid_ = true;
     CELER_ENSURE(primary_phase_ != PrimaryPhase::staged);
@@ -224,6 +241,7 @@ void Stepper<M>::async()
 template<MemSpace M>
 void Stepper<M>::async(SpanConstPrimary primaries)
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(
         !valid_,
         << "cannot start a step before the current step has been consumed");
@@ -254,6 +272,7 @@ size_type Stepper<M>::initializer_capacity() const noexcept
 template<MemSpace M>
 void Stepper<M>::push_primary(Primary const& primary)
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(primary_buffer_.size() < primary_capacity_,
                    << "primary buffer capacity of " << primary_capacity_
                    << " exceeded");
@@ -275,6 +294,7 @@ void Stepper<M>::push_primary(Primary const& primary)
 template<MemSpace M>
 void Stepper<M>::stage_primaries()
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(!primary_buffer_.empty(),
                    << "cannot stage an empty primary buffer");
     CELER_VALIDATE(primary_phase_ != PrimaryPhase::staged,
@@ -336,6 +356,7 @@ void Stepper<M>::stage_primaries()
 template<MemSpace M>
 void Stepper<M>::stage_primaries(SpanConstPrimary primaries)
 {
+    this->rethrow_if_failed();
     CELER_EXPECT(!primaries.empty());
     CELER_VALIDATE(primary_buffer_.empty(),
                    << "cannot stage external primaries while the primary "
@@ -409,10 +430,21 @@ void Stepper<M>::wait() const
 template<MemSpace M>
 auto Stepper<M>::get() -> result_type
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(valid_, << "cannot get without a pending step");
+    CELER_VALIDATE(!completing_, << "cannot recursively complete a step");
 
-    this->wait();
-    actions_->complete_step(*params_, *state_);
+    completing_ = true;
+    ScopeExit on_exit_{[this] { completing_ = false; }};
+    try
+    {
+        this->wait();
+        actions_->complete_step(*params_, *state_);
+    }
+    catch (...)
+    {
+        this->fail();
+    }
     auto result = make_stepper_result(result_counters_.front());
     valid_ = false;
     this->reclaim_submitted_primaries();
@@ -457,6 +489,7 @@ auto Stepper<M>::operator()(SpanConstPrimary primaries) -> result_type
 template<MemSpace M>
 void Stepper<M>::kill_active()
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(
         !valid_, << "cannot kill active tracks while an asynchronous step is executing");
     CELER_VALIDATE(primary_phase_ != PrimaryPhase::staged,
@@ -479,6 +512,7 @@ void Stepper<M>::kill_active()
 template<MemSpace M>
 void Stepper<M>::reseed(UniqueEventId event_id)
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(!valid_,
                    << "cannot reseed while an asynchronous step is executing");
     CELER_VALIDATE(!this->has_queued_primaries(),
@@ -498,6 +532,7 @@ void Stepper<M>::reseed(UniqueEventId event_id)
 template<MemSpace M>
 void Stepper<M>::reset_state()
 {
+    this->rethrow_if_failed();
     CELER_VALIDATE(
         !valid_,
         << "cannot reset state while an asynchronous step is executing");
@@ -532,6 +567,36 @@ void Stepper<M>::reclaim_submitted_primaries()
         staged_primaries_.clear();
         primary_phase_ = PrimaryPhase::empty;
     }
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Reject reuse after a failed submission or partially delivered callback batch.
+ */
+template<MemSpace M>
+void Stepper<M>::rethrow_if_failed() const
+{
+    if (failure_)
+        std::rethrow_exception(failure_);
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Save the current exception and finish transfers before unwinding ownership.
+ *
+ * Unlike normal completion, abort cleanup must also cover any later staged
+ * primary copy and work queued before a failed submission recorded its event.
+ */
+template<MemSpace M>
+void Stepper<M>::fail()
+{
+    failure_ = std::current_exception();
+    CELER_ASSERT(failure_);
+    if constexpr (M == MemSpace::device)
+    {
+        device().stream(state_->stream_id()).sync();
+    }
+    std::rethrow_exception(failure_);
 }
 
 //---------------------------------------------------------------------------//

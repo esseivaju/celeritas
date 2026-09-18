@@ -256,6 +256,15 @@ class LarSphereStepping : public LarSphereIntegrationMixin, public TMITestBase
     void process_hit(G4Step const* s) override
     {
         LarSphereIntegrationMixin::process_hit(s);
+        if (!checked_transition_.exchange(true))
+        {
+            auto& local = dynamic_cast<LocalTransporter&>(
+                detail::IntegrationSingleton::instance().local_offload());
+            int next_event
+                = G4EventManager::GetEventManager()->GetConstCurrentEvent()->GetEventID()
+                  + 1;
+            EXPECT_THROW(local.InitializeEvent(next_event), RuntimeError);
+        }
         auto* track = s->GetTrack();
         auto* info = static_cast<Info*>(track->GetUserInformation());
         if (track->GetTrackID() < 0)
@@ -275,6 +284,7 @@ class LarSphereStepping : public LarSphereIntegrationMixin, public TMITestBase
     std::atomic<int> births_{0}, deep_steps_{0}, terminal_steps_{0},
         zero_steps_{0};
     std::atomic<int> metadata_hits_{0};
+    std::atomic<bool> checked_transition_{false};
 };
 
 TEST_F(LarSphereStepping, registered_actions)

@@ -229,6 +229,11 @@ void LocalTransporter::InitializeEvent(int id)
     CELER_EXPECT(id >= 0);
     CELER_EXPECT(id != event_id_);
 
+    CELER_VALIDATE(
+        !step_->valid() && !transport_active_ && this->GetBufferSize() == 0,
+        << "cannot change Geant4 event before transport and callbacks are "
+           "drained");
+
     event_id_ = id;
     ++run_accum_.events;
 

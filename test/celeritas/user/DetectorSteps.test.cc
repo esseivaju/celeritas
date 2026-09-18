@@ -6,14 +6,11 @@
 //---------------------------------------------------------------------------//
 #include "celeritas/user/DetectorSteps.hh"
 
-#include <atomic>
-#include <chrono>
-#include <thread>
-
 #include "corecel/data/ParamsDataStore.hh"
 #include "corecel/data/Ref.hh"
 #include "corecel/sys/DeviceEvent.hh"
 #include "corecel/sys/Stream.hh"
+#include "corecel/sys/StreamTestUtils.hh"
 #include "celeritas/user/StepData.hh"
 #include "celeritas/user/StepSnapshot.hh"
 #include "celeritas/user/detail/StepScratchCopyExecutor.hh"
@@ -51,28 +48,6 @@ void expect_output_eq(StepOutput const& expected, StepOutput const& actual)
                                   EXPECT_EQ(lhs, rhs);
                               });
 }
-
-struct SnapshotStreamGate
-{
-    std::atomic<bool> released{false};
-    std::atomic<bool> timed_out{false};
-
-    static void wait(void* ptr)
-    {
-        auto& gate = *static_cast<SnapshotStreamGate*>(ptr);
-        auto deadline = std::chrono::steady_clock::now()
-                        + std::chrono::seconds(5);
-        while (!gate.released)
-        {
-            if (std::chrono::steady_clock::now() > deadline)
-            {
-                gate.timed_out = true;
-                break;
-            }
-            std::this_thread::yield();
-        }
-    }
-};
 
 //---------------------------------------------------------------------------//
 }  // namespace
@@ -293,15 +268,15 @@ TEST_F(DetectorStepsTest, TEST_IF_CELER_DEVICE(snapshot_device))
 
     auto& stream = device().stream(StreamId{0});
     DeviceEvent done{device()};
-    SnapshotStreamGate before;
-    SnapshotStreamGate after;
+    StreamTestGate before;
+    StreamTestGate after;
     stream.sync();
-    stream.launch_host_func(&SnapshotStreamGate::wait, &before);
+    stream.launch_host_func(&StreamTestGate::wait, &before);
     snapshot.capture(ref);
     // An accidental wait inside capture will time out the gate.
     EXPECT_FALSE(before.timed_out);
     done.record(stream);
-    stream.launch_host_func(&SnapshotStreamGate::wait, &after);
+    stream.launch_host_func(&StreamTestGate::wait, &after);
     before.released = true;
     done.sync();
     expect_output_eq(expected, snapshot.complete());

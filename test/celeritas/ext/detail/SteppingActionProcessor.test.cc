@@ -12,6 +12,7 @@
 #include <G4DynamicParticle.hh>
 #include <G4EventManager.hh>
 #include <G4LogicalVolume.hh>
+#include <G4LogicalVolumeStore.hh>
 #include <G4MultiSteppingAction.hh>
 #include <G4ParticleTable.hh>
 #include <G4Region.hh>
@@ -62,6 +63,17 @@ struct TruthInfo final : G4VUserTrackInformation
     int* destroyed;
     TruthInfo(int gen, int* d) : generation(gen), destroyed(d) {}
     ~TruthInfo() final { ++*destroyed; }
+};
+
+struct RestoreRegion
+{
+    G4LogicalVolume* volume;
+    G4Region* old_region;
+    ~RestoreRegion()
+    {
+        volume->GetRegion()->SetRegionalSteppingAction(nullptr);
+        volume->SetRegion(old_region);
+    }
 };
 }  // namespace
 
@@ -156,7 +168,7 @@ class AsyncSteppingActionTest : public SteppingActionProcessorTest
     }
 
     template<MemSpace M>
-    void test_async()
+    void test_async(int fail_at = -1)
     {
         this->disable_status_checker();
         auto core = this->core();
@@ -179,8 +191,22 @@ class AsyncSteppingActionTest : public SteppingActionProcessorTest
         primary.direction = {1, 0, 0};
         primary.event_id = EventId{0};
         int calls = 0;
-        this->set_action(
-            std::make_unique<FunctionAction>([&](G4Step const*) { ++calls; }));
+        this->set_action(std::make_unique<FunctionAction>([&](G4Step const*) {
+            ++calls;
+            if (fail_at == 0)
+                throw std::logic_error("global callback failed");
+        }));
+        auto* lv
+            = G4LogicalVolumeStore::GetInstance()->GetVolume("si_tracker");
+        CELER_ASSERT(lv);
+        G4Region region("async-callback-region");
+        FunctionAction regional([&](G4Step const*) {
+            if (fail_at == 1)
+                throw std::logic_error("regional callback failed");
+        });
+        RestoreRegion restore{lv, lv->GetRegion()};
+        region.SetRegionalSteppingAction(&regional);
+        lv->SetRegion(&region);
         if constexpr (M == MemSpace::device)
             device().create_streams(1);
         StepperInput inp;
@@ -198,6 +224,11 @@ class AsyncSteppingActionTest : public SteppingActionProcessorTest
         primary.primary_id = tracks.acquire(original);
         step.push_primary(primary);
         step.stage_primaries();
+        this->consume_steps(step, calls, fail_at);
+    }
+
+    void consume_steps(StepperInterface& step, int& calls, int fail_at)
+    {
         for (int i = 0; i < 4; ++i)
         {
             auto before = calls;
@@ -205,6 +236,15 @@ class AsyncSteppingActionTest : public SteppingActionProcessorTest
             step.wait();
             step.wait();
             EXPECT_EQ(before, calls);
+            if (fail_at >= 0)
+            {
+                EXPECT_THROW(step.get(), std::logic_error);
+                EXPECT_EQ(before + 1, calls);
+                EXPECT_THROW(step.get(), std::logic_error);
+                EXPECT_THROW(step.async(), std::logic_error);
+                EXPECT_EQ(before + 1, calls);
+                return;
+            }
             auto result = step.get();
             EXPECT_EQ(before + result.active, calls);
             EXPECT_THROW(step.get(), RuntimeError);
@@ -226,6 +266,21 @@ TEST_F(AsyncSteppingActionTest, host)
 TEST_F(AsyncSteppingActionTest, TEST_IF_CELER_DEVICE(device))
 {
     this->test_async<MemSpace::device>();
+}
+
+TEST_F(AsyncSteppingActionTest, global_failure)
+{
+    this->test_async<MemSpace::host>(0);
+}
+
+TEST_F(AsyncSteppingActionTest, regional_failure)
+{
+    this->test_async<MemSpace::host>(1);
+}
+
+TEST_F(AsyncSteppingActionTest, TEST_IF_CELER_DEVICE(regional_failure_device))
+{
+    this->test_async<MemSpace::device>(1);
 }
 
 TEST_F(SteppingActionProcessorTest, absent_and_single)

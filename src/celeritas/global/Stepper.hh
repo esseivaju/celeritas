@@ -8,6 +8,7 @@
 #pragma once
 
 #include <array>
+#include <exception>
 #include <memory>
 #include <vector>
 
@@ -115,6 +116,11 @@ struct StepperResult
  * completion callbacks are deferred until \c get. The deprecated
  * call operators preserve synchronous behavior by calling \c async followed
  * by \c get.
+ *
+ * Submission or completion failure permanently disables transport on this
+ * stepper. Later \c get calls rethrow the saved exception without replaying
+ * callbacks. Error cleanup waits for outstanding stream transfers before
+ * propagating the exception; normal completion waits only for the step event.
  *
  * Before destroying a device Stepper, the caller must ensure that any valid
  * asynchronous operation has completed by calling \c wait or \c get, and that
@@ -449,12 +455,18 @@ class Stepper final : public StepperInterface
     DeviceEvent step_done_{nullptr};
     // Whether an asynchronous step result can be retrieved
     bool valid_{false};
+    // A failed step cannot be retried: callbacks may already have run
+    std::exception_ptr failure_;
+    bool completing_{false};
 
     // Whether an operation would conflict with queued primaries
     bool has_queued_primaries() const noexcept;
 
     // Release a submitted primary source after its copy completes
     void reclaim_submitted_primaries();
+
+    void rethrow_if_failed() const;
+    [[noreturn]] void fail();
 };
 
 //---------------------------------------------------------------------------//
