@@ -246,6 +246,22 @@ G4Step* GeantStepReconstruction::operator()(StepOutput const& out,
         step_->SetTrack(&g4track);
         g4track.SetStep(step_.get());
         g4track.SetStepLength(step_->GetStepLength());
+        if (track_reconstruction_->has_track_mapping())
+        {
+            // Preserve the original local-time offset across offload and
+            // repeated reconstruction of the same step by SDs and actions.
+            for (auto sp : range(StepPoint::size_))
+            {
+                if (ss_.points[sp].time)
+                {
+                    auto* point = step_points_[sp];
+                    point->SetLocalTime(track_reconstruction_->local_time(
+                        out.track_id[i], point->GetGlobalTime()));
+                    if (sp == StepPoint::post)
+                        g4track.SetLocalTime(point->GetLocalTime());
+                }
+            }
+        }
         if (!out.track_status.empty())
         {
             g4track.SetTrackStatus(out.track_status[i] == TrackStatus::killed

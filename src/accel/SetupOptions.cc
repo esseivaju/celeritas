@@ -143,6 +143,7 @@ void ProblemSetup::operator()(inp::Problem& p) const
 
     p.control.seed = CLHEP::HepRandom::getTheSeed();
 
+    p.geant_stepping_actions = so.geant_stepping_actions;
     if (so.sd.enabled)
     {
         p.scoring.sd = to_inp(so.sd);

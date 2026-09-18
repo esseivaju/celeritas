@@ -228,6 +228,10 @@ celeritas_add_test(ext/RootImporter.test.cc ${_needs_root})
 celeritas_add_test(ext/RootJsonDumper.test.cc ${_needs_root})
 
 if(CELERITAS_USE_Geant4)
+  celeritas_get_g4libs(_g4_stepping_libs event tracking run)
+  celeritas_add_test(ext/detail/SteppingActionProcessor.test.cc
+    LINK_LIBRARIES testcel_celeritas_g4 ${_g4_stepping_libs}
+    ENVIRONMENT "${CELER_G4ENV}")
   celeritas_add_test(ext/GeantSd.test.cc
     LINK_LIBRARIES testcel_celeritas_g4
     ENVIRONMENT "${CELER_G4ENV}")

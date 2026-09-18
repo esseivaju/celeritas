@@ -82,6 +82,9 @@ class GeantTrackReconstruction
     // Accumulate a completed Celeritas step, at most once per step number
     void advance(TrackId, size_type step_count, double geant_step_length);
 
+    // Convert a global Geant4 time using the track's preserved birth time
+    double local_time(TrackId, double geant_global_time) const;
+
     // Restore track information for given primary and particle IDs
     [[nodiscard]] G4Track& view(ParticleId, PrimaryId) const;
 
@@ -135,6 +138,7 @@ class GeantTrackReconstruction
     {
         std::unique_ptr<G4Track> track;
         size_type step_count{};
+        double birth_time{};
     };
     bool track_mapping_{false};
     int next_secondary_id_{-1};

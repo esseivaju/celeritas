@@ -69,7 +69,8 @@ auto make_set_lv(inp::GeantSd::VariantSetVolume const& sv)
  */
 GeantSd::GeantSd(ParticleParams const& par,
                  Input const& setup,
-                 StreamId::size_type num_streams)
+                 StreamId::size_type num_streams,
+                 bool persistent_tracks)
     : nonzero_energy_deposition_(setup.ignore_zero_deposition)
 {
     CELER_EXPECT(num_streams > 0);
@@ -80,6 +81,13 @@ GeantSd::GeantSd(ParticleParams const& par,
     selection_.weight = setup.track;
     selection_.energy_deposition = setup.energy_deposition;
     selection_.step_length = setup.step_length;
+    if (setup.track && persistent_tracks)
+    {
+        selection_.parent_id = true;
+        selection_.track_step_count = true;
+        selection_.step_length = true;
+        selection_.track_status = true;
+    }
     for (auto p : range(StepPoint::size_))
     {
         update_selection(&selection_.points[p], setup.points[p]);

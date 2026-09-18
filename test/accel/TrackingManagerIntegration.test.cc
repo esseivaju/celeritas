@@ -12,11 +12,16 @@
 #include <mutex>
 #include <regex>
 #include <string_view>
+#include <thread>
+#include <G4MultiSteppingAction.hh>
 #include <G4RunManager.hh>
+#include <G4Step.hh>
 #include <G4Threading.hh>
 #include <G4UImanager.hh>
+#include <G4UserSteppingAction.hh>
 #include <G4UserTrackingAction.hh>
 #include <G4VModularPhysicsList.hh>
+#include <G4VUserTrackInformation.hh>
 
 #include "corecel/ScopedLogStorer.hh"
 #include "corecel/cont/Array.hh"
@@ -152,6 +157,180 @@ class TMITestBase : virtual public IntegrationTestBase
     std::function<void()> check_during_run_;
     std::map<StreamId, int> num_local_events_;
 };
+
+//---------------------------------------------------------------------------//
+// REGISTERED STEPPING ACTIONS
+//---------------------------------------------------------------------------//
+class LarSphereStepping : public LarSphereIntegrationMixin, public TMITestBase
+{
+  public:
+    struct Info final : G4VUserTrackInformation
+    {
+        LarSphereStepping* test;
+        int generation;
+        int last_step{0};
+        std::thread::id worker{std::this_thread::get_id()};
+        Info(LarSphereStepping* t, int g) : test(t), generation(g)
+        {
+            ++test->created_;
+        }
+        ~Info() final { ++test->destroyed_; }
+    };
+
+    class TruthAction final : public G4UserSteppingAction
+    {
+      public:
+        explicit TruthAction(LarSphereStepping* test) : test_(test) {}
+        void UserSteppingAction(G4Step const* s) final
+        {
+            auto* track = s->GetTrack();
+            auto* info = static_cast<Info*>(track->GetUserInformation());
+            if (track->GetTrackID() > 0 && !info)
+            {
+                info = new Info(test_, 0);
+                track->SetUserInformation(info);
+            }
+            ASSERT_NE(nullptr, info);
+            EXPECT_EQ(info->worker, std::this_thread::get_id());
+            EXPECT_EQ(++info->last_step, track->GetCurrentStepNumber());
+            ++test_->steps_;
+            if (s->GetTotalEnergyDeposit() == 0)
+                ++test_->zero_steps_;
+            if (track->GetTrackStatus() == fStopAndKill)
+                ++test_->terminal_steps_;
+            if (info->generation > 1)
+                ++test_->deep_steps_;
+
+            for (auto const* child : *s->GetSecondaryInCurrentStep())
+            {
+                EXPECT_LT(child->GetTrackID(), 0);
+                EXPECT_EQ(track->GetTrackID(), child->GetParentID());
+                EXPECT_EQ(nullptr, child->GetUserInformation());
+                child->SetUserInformation(
+                    new Info(test_, info->generation + 1));
+                ++test_->births_;
+            }
+        }
+
+      private:
+        LarSphereStepping* test_;
+    };
+
+    class CountAction final : public G4UserSteppingAction
+    {
+      public:
+        explicit CountAction(LarSphereStepping* test) : test_(test) {}
+        void UserSteppingAction(G4Step const* s) final
+        {
+            auto* info
+                = static_cast<Info*>(s->GetTrack()->GetUserInformation());
+            ASSERT_NE(nullptr, info);
+            EXPECT_EQ(s->GetTrack()->GetCurrentStepNumber(), info->last_step);
+            ++test_->counted_steps_;
+        }
+
+      private:
+        LarSphereStepping* test_;
+    };
+
+    SetupOptions make_setup_options() override
+    {
+        auto result = TMITestBase::make_setup_options();
+        result.geant_stepping_actions = true;
+        result.max_num_tracks = 2;
+        result.auto_flush = 2;
+        result.initializer_capacity = 4096;
+        return result;
+    }
+
+    UPStepAction make_stepping_action() override
+    {
+        auto result = std::make_unique<G4MultiSteppingAction>();
+        result->push_back(std::make_unique<TruthAction>(this));
+        auto nested = std::make_unique<G4MultiSteppingAction>();
+        nested->push_back(std::make_unique<CountAction>(this));
+        result->push_back(std::move(nested));
+        return result;
+    }
+
+    void process_hit(G4Step const* s) override
+    {
+        LarSphereIntegrationMixin::process_hit(s);
+        auto* track = s->GetTrack();
+        auto* info = static_cast<Info*>(track->GetUserInformation());
+        if (track->GetTrackID() < 0)
+        {
+            ASSERT_NE(nullptr, info);
+            ++metadata_hits_;
+        }
+        if (info)
+        {
+            // SD dispatch precedes stepping callbacks for this step.
+            EXPECT_EQ(info->last_step + 1, track->GetCurrentStepNumber());
+            EXPECT_EQ(info->worker, std::this_thread::get_id());
+        }
+    }
+
+    std::atomic<int> created_{0}, destroyed_{0}, steps_{0}, counted_steps_{0};
+    std::atomic<int> births_{0}, deep_steps_{0}, terminal_steps_{0},
+        zero_steps_{0};
+    std::atomic<int> metadata_hits_{0};
+};
+
+TEST_F(LarSphereStepping, registered_actions)
+{
+    auto& rm = this->run_manager();
+    TMI::Instance().SetOptions(this->make_setup_options());
+    rm.Initialize();
+    rm.BeamOn(4);
+    EXPECT_GT(steps_, 0);
+    EXPECT_EQ(steps_, counted_steps_);
+    EXPECT_GT(zero_steps_, 0);
+    EXPECT_GT(terminal_steps_, 0);
+    EXPECT_GT(births_, 0);
+    EXPECT_GT(deep_steps_, 0);
+    EXPECT_GT(metadata_hits_, 0);
+    EXPECT_EQ(created_, destroyed_);
+}
+
+TEST_F(LarSphereStepping, without_detectors)
+{
+    auto options = this->make_setup_options();
+    options.sd.enabled = false;
+    auto& rm = this->run_manager();
+    TMI::Instance().SetOptions(std::move(options));
+    rm.Initialize();
+    rm.BeamOn(4);
+    EXPECT_GT(steps_, 0);
+    EXPECT_EQ(steps_, counted_steps_);
+    EXPECT_GT(births_, 0);
+    EXPECT_EQ(0, metadata_hits_);
+    EXPECT_EQ(created_, destroyed_);
+}
+
+TEST_F(LarSphereStepping, disabled)
+{
+    auto options = this->make_setup_options();
+    options.geant_stepping_actions = false;
+    check_during_run_ = [] {
+        if (is_running_events())
+        {
+            auto const& state = TMI::Instance().GetState();
+            if (auto const* host
+                = dynamic_cast<CoreState<MemSpace::host> const*>(&state))
+                EXPECT_TRUE(host->ref().init.secondary_births.empty());
+            if (auto const* device
+                = dynamic_cast<CoreState<MemSpace::device> const*>(&state))
+                EXPECT_TRUE(device->ref().init.secondary_births.empty());
+        }
+    };
+    auto& rm = this->run_manager();
+    TMI::Instance().SetOptions(std::move(options));
+    rm.Initialize();
+    rm.BeamOn(4);
+    EXPECT_EQ(0, steps_);
+    EXPECT_EQ(0, created_);
+}
 
 //---------------------------------------------------------------------------//
 // LAR SPHERE (EM only)

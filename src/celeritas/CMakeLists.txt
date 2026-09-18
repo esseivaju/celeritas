@@ -248,6 +248,7 @@ if(CELERITAS_USE_Geant4)
     ext/FtfpBertPhysicsList.cc
     ext/GeantImporter.cc
     ext/GeantSd.cc
+    ext/GeantSteppingAction.cc
     ext/GeantSdOutput.cc
     ext/GeantSetup.cc
     ext/GeantStepPointView.cc
@@ -262,6 +263,7 @@ if(CELERITAS_USE_Geant4)
     ext/detail/GeantScintillationLoader.cc
     ext/detail/GeantSurfacePhysicsLoader.cc
     ext/detail/GeantStepReconstruction.cc
+    ext/detail/SteppingActionProcessor.cc
     ext/detail/HitProcessor.cc
     ext/detail/LevelTouchableUpdater.cc
     ext/detail/NaviTouchableUpdater.cc
@@ -278,7 +280,7 @@ if(CELERITAS_USE_Geant4)
   endif()
 
   celeritas_get_g4libs(_cg4_libs
-    global geometry materials processes run physicslists tasking
+    global geometry materials processes run physicslists tasking event tracking
   )
   celeritas_add_object_library(celeritas_geant4 ${_cg4_sources})
   celeritas_target_link_libraries(celeritas_geant4

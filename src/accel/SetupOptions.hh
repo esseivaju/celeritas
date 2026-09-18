@@ -239,6 +239,9 @@ struct SetupOptions
     //! Sensitive detector options
     SDSetupOptions sd;
 
+    //! Forward all registered Geant4 stepping actions (main transport loop)
+    bool geant_stepping_actions{false};
+
     //!@{
     //! \name Physics options
 

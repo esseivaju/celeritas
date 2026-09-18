@@ -67,6 +67,8 @@ struct Problem
     Field field;
     //! Manage scoring of hits and other quantities
     Scoring scoring;
+    //! Forward registered Geant4 stepping actions on the owning worker
+    bool geant_stepping_actions{false};
     //! Tuning options that affect the physics
     Tracking tracking;
 

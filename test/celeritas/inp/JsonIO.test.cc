@@ -11,6 +11,7 @@
 #include "celeritas/inp/EventsIO.json.hh"
 #include "celeritas/inp/FieldIO.json.hh"
 #include "celeritas/inp/ImportIO.json.hh"
+#include "celeritas/inp/ProblemIO.json.hh"
 #include "celeritas/inp/ScoringIO.json.hh"
 #include "celeritas/inp/StandaloneInput.hh"
 #include "celeritas/inp/StandaloneInputIO.json.hh"
@@ -51,6 +52,22 @@ TEST(JsonIO, control)
     static char const expected[]
         = R"json({"capacity":{"events":null,"initializers":32768,"primaries":4096,"secondaries":8192,"tracks":4096},"device_debug":null,"optical_capacity":{"generators":8192,"primaries":524288,"tracks":4096},"seed":12345,"track_order":"init_charge","warm_up":false})json";
     EXPECT_JSON_ROUND_TRIP(input, expected);
+}
+
+TEST(JsonIO, geant_stepping_actions)
+{
+    Problem p;
+    p.model.geometry = "geometry.gdml";
+    EXPECT_FALSE(p.geant_stepping_actions);
+    nlohmann::json j = p;
+    EXPECT_FALSE(j.contains("geant_stepping_actions"));
+    EXPECT_FALSE(j.get<Problem>().geant_stepping_actions);
+    p.geant_stepping_actions = true;
+    j = p;
+    EXPECT_TRUE(j.at("geant_stepping_actions").get<bool>());
+    EXPECT_TRUE(j.get<Problem>().geant_stepping_actions);
+    j["geant_stepping_actions"] = false;
+    EXPECT_FALSE(j.get<Problem>().geant_stepping_actions);
 }
 
 TEST(JsonIO, diagnostics)

@@ -213,6 +213,7 @@ TEST_F(GtrTest, persistent_tracks)
     G4Track primary(
         new G4DynamicParticle(particles_[0], {0, 0, 1}, 10), 2, {1, 2, 3});
     primary.SetTrackID(42);
+    primary.SetLocalTime(0.5);
     primary.SetParentID(7);
     primary.SetVertexPosition({4, 5, 6});
     primary.AddTrackLength(12);
@@ -222,6 +223,10 @@ TEST_F(GtrTest, persistent_tracks)
     auto pid = recon.acquire(primary);
     auto& root = recon.view(ParticleId{0}, pid, TrackId{0}, {});
     EXPECT_EQ(42, root.GetTrackID());
+    EXPECT_DOUBLE_EQ(1.5, recon.local_time(TrackId{0}, 3));
+    root.SetGlobalTime(100);
+    root.SetLocalTime(50);
+    EXPECT_DOUBLE_EQ(1.5, recon.local_time(TrackId{0}, 3));
     EXPECT_EQ(7, root.GetParentID());
     EXPECT_EQ(primary.GetVertexPosition(), root.GetVertexPosition());
     EXPECT_EQ(12, root.GetTrackLength());
@@ -245,6 +250,7 @@ TEST_F(GtrTest, persistent_tracks)
     birth.direction = {1, 0, 0};
     auto& child = recon.insert_secondary(birth);
     EXPECT_EQ(-1, child.GetTrackID());
+    EXPECT_DOUBLE_EQ(0, recon.local_time(TrackId{1}, child.GetGlobalTime()));
     EXPECT_EQ(42, child.GetParentID());
     EXPECT_EQ(0.5, child.GetWeight());
     EXPECT_EQ(nullptr, child.GetUserInformation());

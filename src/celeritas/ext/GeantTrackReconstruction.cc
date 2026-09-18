@@ -270,8 +270,12 @@ G4Track& GeantTrackReconstruction::view(
         CELER_VALIDATE(pending != pending_tracks_.end(),
                        << "missing offloaded primary "
                        << primary.unchecked_get());
+        double birth_time = pending->second->GetGlobalTime()
+                            - pending->second->GetLocalTime();
         iter = mapped_tracks_
-                   .emplace(id, TrackEntry{std::move(pending->second), 0})
+                   .emplace(
+                       id,
+                       TrackEntry{std::move(pending->second), 0, birth_time})
                    .first;
         pending_tracks_.erase(pending);
     }
@@ -319,8 +323,9 @@ G4Track& GeantTrackReconstruction::insert_secondary(SecondaryBirth const& birth)
     track->SetVertexPosition(track->GetPosition());
     track->SetVertexMomentumDirection(track->GetMomentumDirection());
     track->SetVertexKineticEnergy(track->GetKineticEnergy());
-    auto result = mapped_tracks_.emplace(birth.sim.track_id,
-                                         TrackEntry{std::move(track), 0});
+    double birth_time = track->GetGlobalTime();
+    auto result = mapped_tracks_.emplace(
+        birth.sim.track_id, TrackEntry{std::move(track), 0, birth_time});
     return *result.first->second.track;
 }
 
@@ -348,6 +353,20 @@ void GeantTrackReconstruction::advance(
     entry.track->IncrementCurrentStepNumber();
     entry.track->AddTrackLength(length);
     entry.step_count = count;
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Compute local time independently of partially reconstructed SD track fields.
+ *
+ * All times are in Geant4 units. The origin is preserved from an offloaded
+ * track or assigned when a Celeritas secondary is born.
+ */
+double GeantTrackReconstruction::local_time(TrackId id,
+                                            double global_time) const
+{
+    CELER_EXPECT(track_mapping_);
+    return global_time - mapped_tracks_.at(id).birth_time;
 }
 
 //---------------------------------------------------------------------------//

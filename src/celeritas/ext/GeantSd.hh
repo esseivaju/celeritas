@@ -68,7 +68,8 @@ class GeantSd final : public StepInterface
     // Construct with Celeritas objects for mapping
     GeantSd(ParticleParams const& par,
             Input const& setup,
-            StreamId::size_type num_streams);
+            StreamId::size_type num_streams,
+            bool persistent_tracks = false);
 
     CELER_DEFAULT_MOVE_DELETE_COPY(GeantSd);
 
@@ -131,7 +132,7 @@ class GeantSd final : public StepInterface
 #if !CELERITAS_USE_GEANT4
 
 inline GeantSd::GeantSd(
-    ParticleParams const&, Input const&, StreamId::size_type)
+    ParticleParams const&, Input const&, StreamId::size_type, bool)
 {
     CELER_NOT_CONFIGURED("Geant4");
 }

@@ -36,6 +36,10 @@ void to_json(nlohmann::json& j, Problem const& v)
         CELER_JSON_PAIR(v, control),
         CELER_JSON_PAIR(v, diagnostics),
     };
+    if (v.geant_stepping_actions)
+    {
+        j["geant_stepping_actions"] = true;
+    }
 }
 
 void from_json(nlohmann::json const& j, Problem& v)
@@ -43,6 +47,7 @@ void from_json(nlohmann::json const& j, Problem& v)
     CELER_JSON_LOAD_REQUIRED(j, v, model);
     CELER_JSON_LOAD_OPTION(j, v, field);
     CELER_JSON_LOAD_OPTION(j, v, scoring);
+    CELER_JSON_LOAD_OPTION(j, v, geant_stepping_actions);
     CELER_JSON_LOAD_OPTION(j, v, tracking);
     CELER_JSON_LOAD_OPTION(j, v, control);
     CELER_JSON_LOAD_OPTION(j, v, diagnostics);

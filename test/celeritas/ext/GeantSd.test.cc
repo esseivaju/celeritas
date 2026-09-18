@@ -117,6 +117,21 @@ class SimpleCmsTest : public SensDetTestBase, public SimpleCmsTestBase
 
 G4LogicalVolume const* SimpleCmsTest::detached_lv{nullptr};
 
+TEST_F(SimpleCmsTest, persistent_selection)
+{
+    sd_setup_.track = true;
+    sd_setup_.step_length = false;
+    GeantSd legacy(*this->particle(), sd_setup_, 1);
+    EXPECT_FALSE(legacy.selection().parent_id);
+    EXPECT_FALSE(legacy.selection().track_step_count);
+    EXPECT_FALSE(legacy.selection().step_length);
+    GeantSd persistent(*this->particle(), sd_setup_, 1, true);
+    EXPECT_TRUE(persistent.selection().parent_id);
+    EXPECT_TRUE(persistent.selection().track_step_count);
+    EXPECT_TRUE(persistent.selection().step_length);
+    EXPECT_TRUE(persistent.selection().track_status);
+}
+
 TEST_F(SimpleCmsTest, no_change)
 {
     GeantSd man = this->make_hit_manager();

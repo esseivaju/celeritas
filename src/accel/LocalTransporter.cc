@@ -37,9 +37,11 @@
 #include "celeritas/Quantities.hh"
 #include "celeritas/Types.hh"
 #include "celeritas/ext/GeantSd.hh"  // IWYU pragma: keep
+#include "celeritas/ext/GeantSteppingAction.hh"
 #include "celeritas/ext/GeantTrackReconstruction.hh"
 #include "celeritas/ext/GeantTrackView.hh"
 #include "celeritas/ext/detail/HitProcessor.hh"
+#include "celeritas/ext/detail/SteppingActionProcessor.hh"
 #include "celeritas/global/ActionSequence.hh"
 #include "celeritas/global/CoreParams.hh"  // IWYU pragma: keep
 #include "celeritas/global/PrimaryCapacity.hh"
@@ -177,6 +179,12 @@ LocalTransporter::LocalTransporter(SetupOptions const& options,
     {
         hit_processor_ = hit_manager->make_local_processor(stream_id);
         track_reconstruction_ = hit_processor_->track_reconstruction();
+    }
+    if (auto const& actions = params.problem_loaded().geant_stepping_actions)
+    {
+        stepping_processor_
+            = actions->make_local_processor(stream_id, track_reconstruction_);
+        track_reconstruction_ = stepping_processor_->track_reconstruction();
     }
     if (!track_reconstruction_)
     {

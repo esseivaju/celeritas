@@ -26,6 +26,7 @@ namespace celeritas
 namespace detail
 {
 class HitProcessor;
+class SteppingActionProcessor;
 }  // namespace detail
 
 struct SetupOptions;
@@ -225,6 +226,7 @@ class LocalTransporter final : public TrackOffloadInterface
 
     // Thread-local Geant4 integration data
     std::shared_ptr<detail::HitProcessor> hit_processor_;
+    std::shared_ptr<detail::SteppingActionProcessor> stepping_processor_;
     std::shared_ptr<GeantTrackReconstruction> track_reconstruction_;
     std::shared_ptr<OpticalCollector const> optical_;
 

@@ -166,6 +166,15 @@ celeritas_add_integration_tests(
 )
 
 # Test state dependent output
+foreach(_stepping_test IN ITEMS registered_actions without_detectors disabled)
+  celeritas_add_integration_tests(
+    TrackingManagerIntegration LarSphereStepping ${_stepping_test}
+    OFFLOAD cpu gpu
+    RMTYPE serial mt
+  )
+endforeach()
+
+# Test state dependent output
 celeritas_add_integration_tests(
   TrackingManagerIntegration LarSphere state_dep
   OFFLOAD g4

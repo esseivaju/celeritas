@@ -38,6 +38,7 @@
 #include "celeritas/ext/GeantPhysicsOptions.hh"
 #include "celeritas/ext/GeantSd.hh"
 #include "celeritas/ext/GeantSetup.hh"
+#include "celeritas/ext/GeantSteppingAction.hh"
 #include "celeritas/ext/RootExporter.hh"
 #include "celeritas/ext/RootFileManager.hh"
 #include "celeritas/field/FieldDriverOptions.hh"
@@ -182,11 +183,14 @@ auto build_physics(inp::Problem const& p,
 /*!
  * Construct track initialization params.
  */
-auto build_track_init(inp::Control const& c, CoreParams::Input const& params)
+auto build_track_init(inp::Control const& c,
+                      CoreParams::Input const& params,
+                      bool save_secondaries)
 {
     TrackInitParams::Input input;
     input.capacity = ceil_div(params.sizes.initializers, params.sizes.streams);
     input.max_events = params.sizes.events;
+    input.save_secondaries = save_secondaries;
     if (celeritas::device())
     {
         input.track_order = c.track_order.value_or(TrackOrder::init_charge);
@@ -551,7 +555,7 @@ ProblemLoaded problem(inp::Problem const& p, ImportData const& imported)
     }());
 
     // Construct track initialization params
-    params.init = build_track_init(p.control, params);
+    params.init = build_track_init(p.control, params, p.geant_stepping_actions);
 
     // Construct core
     auto core_params = std::make_shared<CoreParams>(std::move(params));
@@ -684,8 +688,10 @@ ProblemLoaded problem(inp::Problem const& p, ImportData const& imported)
 
     if (p.scoring.sd)
     {
-        result.geant_sd = std::make_shared<GeantSd>(
-            *core_params->particle(), *p.scoring.sd, num_streams);
+        result.geant_sd = std::make_shared<GeantSd>(*core_params->particle(),
+                                                    *p.scoring.sd,
+                                                    num_streams,
+                                                    p.geant_stepping_actions);
         step_interfaces.push_back(result.geant_sd);
     }
 
@@ -707,6 +713,16 @@ ProblemLoaded problem(inp::Problem const& p, ImportData const& imported)
         // NOTE: step collector primarily *builds* the actions
         result.step_collector = StepCollector::make_and_insert(
             *core_params, std::move(step_interfaces));
+    }
+
+    if (p.geant_stepping_actions)
+    {
+        auto& actions = *core_params->action_reg();
+        result.geant_stepping_actions = std::make_shared<GeantSteppingAction>(
+            actions.next_id(), *core_params->particle(), num_streams);
+        actions.insert(result.geant_stepping_actions);
+        StepCollector::make_and_insert(
+            *core_params, {result.geant_stepping_actions}, "geant-user");
     }
 
     if (p.control.optical_capacity)
