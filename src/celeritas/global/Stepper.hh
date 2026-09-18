@@ -88,7 +88,9 @@ struct StepperResult
  * result valid. No other step can be started until \c get returns the result
  * and restores the initial state. The \c ready function queries completion
  * without blocking, \c wait blocks without consuming the result, and \c get
- * waits if necessary before consuming it. All three require a valid result.
+ * waits if necessary, invokes completion callbacks on the calling thread,
+ * and consumes it. All three require a valid result. Neither \c ready nor
+ * \c wait invokes callbacks.
  * A valid result can be ready: \c valid describes whether the result can be
  * retrieved, rather than whether device execution is still underway.
  *
@@ -109,14 +111,16 @@ struct StepperResult
  * next step cannot start until \c get consumes that result. Thus result
  * completion and primary production have independent lifecycles.
  *
- * Host steps execute synchronously and are immediately ready. The deprecated
+ * Host transport executes synchronously and is immediately ready, but host
+ * completion callbacks are deferred until \c get. The deprecated
  * call operators preserve synchronous behavior by calling \c async followed
  * by \c get.
  *
  * Before destroying a device Stepper, the caller must ensure that any valid
  * asynchronous operation has completed by calling \c wait or \c get, and that
- * any staged primary batch has been submitted with \c async. Destruction does
- * not add hidden synchronization.
+ * any staged primary batch has been submitted with \c async. Normal completion
+ * requires \c get to deliver pending callbacks: \c wait alone does not deliver
+ * them. Destruction does not invoke callbacks or add hidden synchronization.
  *
  * \note This interface and its implementations may be removed soon to
  * facilitate step gathering.

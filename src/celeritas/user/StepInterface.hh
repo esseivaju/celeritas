@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: (Apache-2.0 OR MIT)
 //---------------------------------------------------------------------------//
 //! \file celeritas/user/StepInterface.hh
+//! \sa StepCollector.test.cc
 //---------------------------------------------------------------------------//
 #pragma once
 
@@ -67,11 +68,20 @@ class StepInterface
     //! Selection of data required for this interface
     virtual StepSelection selection() const = 0;
 
+    //! Prepare owned storage before any host step is submitted
+    virtual void begin_run(HostStepState) {}
+
+    //! Prepare owned storage before any device step is submitted
+    virtual void begin_run(DeviceStepState) {}
+
     //! Process CPU-generated hit data
     virtual void process_steps(HostStepState) = 0;
 
     //! Process device-generated hit data
     virtual void process_steps(DeviceStepState) = 0;
+
+    //! Deliver saved data after the producing step has completed
+    virtual void process_pending_steps(StreamId) {}
 
     // TODO: hook for end-of-event and/or end-of-run
 

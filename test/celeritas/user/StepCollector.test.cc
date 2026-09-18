@@ -178,6 +178,50 @@ class TestMultiEm3InstanceCaloTest : public TestEm3CollectorTestBase
 // ERROR CHECKING
 //---------------------------------------------------------------------------//
 
+class DeferredSteps final : public StepInterface
+{
+  public:
+    int initialized{0};
+    int captured{0};
+    int delivered{0};
+    Filters filters() const final { return {}; }
+    StepSelection selection() const final { return StepSelection::all(); }
+    void begin_run(HostStepState state) final
+    {
+        EXPECT_EQ(2, state.steps.size());
+        ++initialized;
+    }
+    void process_steps(HostStepState) final { ++captured; }
+    void process_steps(DeviceStepState) final { ADD_FAILURE(); }
+    void process_pending_steps(StreamId stream) final
+    {
+        EXPECT_EQ(StreamId{0}, stream);
+        ++delivered;
+    }
+};
+
+TEST_F(KnSimpleLoopTestBase, deferred_callbacks)
+{
+    auto callback = std::make_shared<DeferredSteps>();
+    auto collector = StepCollector::make_and_insert(*this->core(), {callback});
+    StepperInput inp;
+    inp.params = this->core();
+    inp.stream_id = StreamId{0};
+    inp.num_track_slots = 2;
+    inp.actions = std::make_shared<ActionSequence>(*this->action_reg(),
+                                                   ActionSequence::Options{});
+    Stepper<MemSpace::host> step(inp);
+    EXPECT_EQ(1, callback->initialized);
+    auto primaries = this->make_primaries(2);
+    step.async(make_span(primaries));
+    EXPECT_EQ(1, callback->captured);
+    EXPECT_EQ(0, callback->delivered);
+    step.wait();
+    EXPECT_EQ(0, callback->delivered);
+    step.get();
+    EXPECT_EQ(1, callback->delivered);
+}
+
 TEST_F(KnSimpleLoopTestBase, mixing_types)
 {
     this->geometry();

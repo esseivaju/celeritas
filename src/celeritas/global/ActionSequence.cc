@@ -40,6 +40,16 @@ ActionSequence::ActionSequence(ActionRegistry const& reg, Options options)
     , options_{std::move(options)}
     , num_actions_(reg.num_actions())
 {
+    for (auto const& action : actions_.step())
+    {
+        if (auto completion
+            = std::dynamic_pointer_cast<CoreStepCompletionActionInterface const>(
+                action))
+        {
+            completion_actions_.push_back(std::move(completion));
+        }
+    }
+
     // Get status checker if available
     for (auto const& brun_sp : actions_.begin_run())
     {
@@ -156,6 +166,40 @@ void ActionSequence::step(CoreParams const& params, CoreState<M>& state)
 
 //---------------------------------------------------------------------------//
 /*!
+ * Complete saved host callbacks in step action order.
+ *
+ * The caller has already waited for the producing step's completion event.
+ * Timing excludes the wait and any application work between submission and
+ * completion, and does not synchronize subsequently staged work.
+ */
+template<MemSpace M>
+void ActionSequence::complete_step(CoreParams const& params,
+                                   CoreState<M>& state)
+{
+    if (completion_actions_.empty())
+        return;
+
+    Stopwatch get_completion_time;
+    for (auto const& action : completion_actions_)
+    {
+        ScopedProfiling profile_this{action->label()};
+        Stopwatch get_action_time;
+        action->complete_step(params, state);
+        if (options_.action_times && !state.warming_up())
+        {
+            options_.action_times->state(state.aux())
+                .accum_time[action->action_id().get()] += get_action_time();
+        }
+    }
+    if (options_.step_times && !state.warming_up())
+    {
+        options_.step_times->state(state.aux()).time.back()
+            += get_completion_time();
+    }
+}
+
+//---------------------------------------------------------------------------//
+/*!
  * Get the accumulated action times.
  */
 auto ActionSequence::get_action_times(AuxStateVec const& aux) const -> MapStrDbl
@@ -191,6 +235,11 @@ template void ActionSequence::step(CoreParams const&,
                                    CoreState<MemSpace::host>&);
 template void ActionSequence::step(CoreParams const&,
                                    CoreState<MemSpace::device>&);
+
+template void ActionSequence::complete_step(CoreParams const&,
+                                            CoreState<MemSpace::host>&);
+template void ActionSequence::complete_step(CoreParams const&,
+                                            CoreState<MemSpace::device>&);
 
 //---------------------------------------------------------------------------//
 }  // namespace celeritas

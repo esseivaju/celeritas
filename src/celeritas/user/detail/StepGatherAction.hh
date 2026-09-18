@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: (Apache-2.0 OR MIT)
 //---------------------------------------------------------------------------//
 //! \file celeritas/user/detail/StepGatherAction.hh
+//! \sa ../StepCollector.test.cc
 //---------------------------------------------------------------------------//
 #pragma once
 
@@ -32,7 +33,9 @@ namespace detail
  * This implementation class is constructed by the StepCollector.
  */
 template<StepPoint P>
-class StepGatherAction final : public CoreStepActionInterface
+class StepGatherAction final : public CoreStepActionInterface,
+                               public CoreBeginRunActionInterface,
+                               public CoreStepCompletionActionInterface
 {
   public:
     //!@{
@@ -54,6 +57,11 @@ class StepGatherAction final : public CoreStepActionInterface
 
     // Launch kernel with device data
     void step(CoreParams const&, CoreStateDevice&) const final;
+
+    void begin_run(CoreParams const&, CoreStateHost&) final;
+    void begin_run(CoreParams const&, CoreStateDevice&) final;
+    void complete_step(CoreParams const&, CoreStateHost&) const final;
+    void complete_step(CoreParams const&, CoreStateDevice&) const final;
 
     //! ID of the model
     ActionId action_id() const final { return id_; }
@@ -80,6 +88,10 @@ class StepGatherAction final : public CoreStepActionInterface
     VecInterface callbacks_;
     std::string label_;
     std::string description_;
+
+    template<MemSpace M>
+    void begin_run_impl(CoreState<M>&);
+    void complete_step_impl(StreamId) const;
 };
 
 //---------------------------------------------------------------------------//

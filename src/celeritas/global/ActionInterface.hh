@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: (Apache-2.0 OR MIT)
 //---------------------------------------------------------------------------//
 //! \file celeritas/global/ActionInterface.hh
+//! \sa Stepper.test.cc
 //---------------------------------------------------------------------------//
 #pragma once
 
@@ -25,6 +26,24 @@ using CoreBeginRunActionInterface
 
 //! Action interface for core stepping loop
 using CoreStepActionInterface = StepActionInterface<CoreParams, CoreState>;
+
+//---------------------------------------------------------------------------//
+/*!
+ * Complete host processing after a step's stream work has finished.
+ *
+ * Actions implementing this optional interface must also implement
+ * \c CoreStepActionInterface. Completion runs on the caller of \c Stepper::get
+ * in step action order. It must not access data from subsequently staged
+ * primaries or enqueue transport work.
+ */
+class CoreStepCompletionActionInterface
+    : public ActionTypeTraits<CoreParams, CoreState>,
+      public virtual ActionInterface
+{
+  public:
+    virtual void complete_step(CoreParams const&, CoreStateHost&) const = 0;
+    virtual void complete_step(CoreParams const&, CoreStateDevice&) const = 0;
+};
 
 //---------------------------------------------------------------------------//
 // HELPER FUNCTIONS

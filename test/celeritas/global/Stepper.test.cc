@@ -248,6 +248,93 @@ class AsyncStepperTest : public SimpleComptonTest
     void SetUp() { this->disable_status_checker(); }
 };
 
+class CompletionAction final : public CoreStepActionInterface,
+                               public CoreStepCompletionActionInterface,
+                               public ConcreteAction
+{
+  public:
+    CompletionAction(
+        ActionId id, StepActionOrder order, std::vector<int>* calls)
+        : ConcreteAction(id, std::string("complete-") + to_cstring(order))
+        , order_(order)
+        , calls_(calls)
+    {
+    }
+    StepActionOrder order() const final { return order_; }
+    void step(CoreParams const&, CoreStateHost&) const final {}
+    void step(CoreParams const&, CoreStateDevice&) const final {}
+    void complete_step(CoreParams const&, CoreStateHost& state) const final
+    {
+        this->complete(state.warming_up());
+    }
+    void complete_step(CoreParams const&, CoreStateDevice& state) const final
+    {
+        this->complete(state.warming_up());
+    }
+
+  private:
+    StepActionOrder order_;
+    std::vector<int>* calls_;
+
+    void complete(bool warming_up) const
+    {
+        if (!warming_up)
+            calls_->push_back(static_cast<int>(order_));
+    }
+};
+
+class CompletionStepperTest : public AsyncStepperTest
+{
+  public:
+    template<MemSpace M>
+    void run()
+    {
+        std::vector<int> calls;
+        for (auto order :
+             {StepActionOrder::user_end, StepActionOrder::user_post})
+        {
+            this->action_reg()->insert(std::make_shared<CompletionAction>(
+                this->action_reg()->next_id(), order, &calls));
+        }
+        Stepper<M> step(this->make_stepper_input(4));
+        step.warm_up();
+        EXPECT_TRUE(calls.empty());
+        auto primaries = this->make_primaries(2);
+        step.async(make_span(primaries));
+        EXPECT_TRUE(calls.empty());
+        step.push_primary(primaries.front());
+        step.stage_primaries();
+        for (int i = 0; i < 2; ++i)
+        {
+            static_cast<void>(step.ready());
+            step.wait();
+            EXPECT_TRUE(step.ready());
+            EXPECT_TRUE(calls.empty());
+        }
+        EXPECT_THROW(step.async(), RuntimeError);
+        step.get();
+        EXPECT_VEC_EQ(
+            (std::vector<int>{static_cast<int>(StepActionOrder::user_post),
+                              static_cast<int>(StepActionOrder::user_end)}),
+            calls);
+        EXPECT_THROW(step.get(), RuntimeError);
+        step.async();
+        EXPECT_EQ(2, calls.size());
+        step.get();
+        EXPECT_EQ(4, calls.size());
+    }
+};
+
+TEST_F(CompletionStepperTest, host)
+{
+    this->run<MemSpace::host>();
+}
+
+TEST_F(CompletionStepperTest, TEST_IF_CELER_DEVICE(device))
+{
+    this->run<MemSpace::device>();
+}
+
 #define BadGeometryTest TEST_IF_CELERITAS_ORANGE(BadGeometryTest)
 class BadGeometryTest : public InvalidOrangeTestBase
 {

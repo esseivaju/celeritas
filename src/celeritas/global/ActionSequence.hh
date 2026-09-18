@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: (Apache-2.0 OR MIT)
 //---------------------------------------------------------------------------//
 //! \file celeritas/global/ActionSequence.hh
+//! \sa Stepper.test.cc
 //---------------------------------------------------------------------------//
 #pragma once
 
@@ -66,6 +67,10 @@ class ActionSequence
     template<MemSpace M>
     void step(CoreParams const&, CoreState<M>& state);
 
+    // Complete host processing after the producing stream has finished
+    template<MemSpace M>
+    void complete_step(CoreParams const&, CoreState<M>& state);
+
     // Get the accumulated action times
     MapStrDbl get_action_times(AuxStateVec const&) const;
 
@@ -79,6 +84,8 @@ class ActionSequence
 
   private:
     ActionGroupsT actions_;
+    std::vector<std::shared_ptr<CoreStepCompletionActionInterface const>>
+        completion_actions_;
     Options options_;
     size_type num_actions_;
     std::shared_ptr<StatusChecker const> status_checker_;

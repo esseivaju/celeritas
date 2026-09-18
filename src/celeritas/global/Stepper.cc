@@ -158,6 +158,7 @@ void Stepper<M>::warm_up()
     ScopeExit on_exit_{[this] { state_->warming_up(false); }};
     actions_->step(*params_, *state_);
     CELER_ENSURE(state_->sync_get_counters().num_active == 0);
+    actions_->complete_step(*params_, *state_);
 }
 
 //---------------------------------------------------------------------------//
@@ -411,6 +412,7 @@ auto Stepper<M>::get() -> result_type
     CELER_VALIDATE(valid_, << "cannot get without a pending step");
 
     this->wait();
+    actions_->complete_step(*params_, *state_);
     auto result = make_stepper_result(result_counters_.front());
     valid_ = false;
     this->reclaim_submitted_primaries();
