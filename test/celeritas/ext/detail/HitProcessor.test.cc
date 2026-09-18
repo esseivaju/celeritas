@@ -6,6 +6,7 @@
 //---------------------------------------------------------------------------//
 #include "celeritas/ext/detail/HitProcessor.hh"
 
+#include <future>
 #include <G4DynamicParticle.hh>
 #include <G4ParticleTable.hh>
 #include <G4ThreeVector.hh>
@@ -20,6 +21,7 @@
 #include "celeritas/phys/PDGNumber.hh"
 #include "celeritas/user/DetectorSteps.hh"
 #include "celeritas/user/StepData.hh"
+#include "celeritas/user/detail/VisitStepFields.hh"
 
 #include "celeritas_test.hh"
 #include "../SensDetTestBase.hh"
@@ -300,6 +302,41 @@ DetectorStepOutput SimpleCmsTest::make_dso() const
 }
 
 //---------------------------------------------------------------------------//
+TEST_F(SimpleCmsTest, deferred_hits)
+{
+    selection_.particle_id = false;
+    selection_.primary_id = false;
+    auto processor = this->make_hit_processor();
+    auto output = this->make_dso();
+    HostVal<StepParamsData> params;
+    params.selection = selection_;
+    make_builder(&params.detector).push_back(DetectorId{0});
+    HostCRef<StepParamsData> params_ref;
+    params_ref = params;
+    HostVal<StepStateData> state;
+    resize(&state, params_ref, StreamId{0}, output.size());
+    visit_step_fields(
+        state.data, output, 0, [](auto& dst, auto const& src, size_type) {
+            ASSERT_EQ(dst.size(), src.size());
+            std::copy(src.begin(), src.end(), dst.data().get());
+        });
+    HostRef<StepStateData> ref;
+    ref = state;
+    processor.initialize(ref);
+    processor(ref);
+    EXPECT_TRUE(this->get_hits("si_tracker").energy_deposition.empty());
+    EXPECT_EQ(0, processor.exchange_hits());
+    EXPECT_THROW(processor(ref), RuntimeError);
+    auto wrong_worker = std::async(std::launch::async, [&] {
+        EXPECT_THROW(processor.process_pending_steps(), RuntimeError);
+    });
+    wrong_worker.get();
+    processor.process_pending_steps();
+    EXPECT_EQ(1, this->get_hits("si_tracker").energy_deposition.size());
+    EXPECT_EQ(3, processor.exchange_hits());
+    EXPECT_THROW(processor.process_pending_steps(), RuntimeError);
+}
+
 TEST_F(SimpleCmsTest, no_touchable)
 {
     HitProcessor process_hits = this->make_hit_processor();

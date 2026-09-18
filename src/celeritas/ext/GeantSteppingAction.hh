@@ -4,6 +4,7 @@
 //---------------------------------------------------------------------------//
 //! \file celeritas/ext/GeantSteppingAction.hh
 //! \sa accel/TrackingManagerIntegration.test.cc
+//! \sa detail/SteppingActionProcessor.test.cc
 //---------------------------------------------------------------------------//
 #pragma once
 
@@ -31,12 +32,15 @@ class SteppingActionProcessor;
  * Forward saved Celeritas steps to the worker's registered Geant4 actions.
  *
  * The unfiltered collector saves completed steps at user_post. This action
- * dispatches at user_end, after secondary identity has been assigned, on the
- * calling Geant4 worker. Processors and their Geant4 objects must be created
- * and destroyed on that worker. Geant4 retains ownership of its actions.
+ * captures secondary identities at user_end and dispatches from Stepper::get
+ * on the calling Geant4 worker. Processors and their Geant4 objects must be
+ * created and destroyed on that worker. Geant4 retains ownership of its
+ * actions.
  */
 class GeantSteppingAction final : public StepInterface,
                                   public CoreStepActionInterface,
+                                  public CoreBeginRunActionInterface,
+                                  public CoreStepCompletionActionInterface,
                                   public StaticConcreteAction
 {
   public:
@@ -53,13 +57,19 @@ class GeantSteppingAction final : public StepInterface,
     Filters filters() const final { return {}; }
     //! Reconstruct all available step fields
     StepSelection selection() const final { return StepSelection::all(); }
-    //! Dispatch after assigning identities to this step's secondaries
+    //! Capture births after assigning identities to this step's secondaries
     StepActionOrder order() const final { return StepActionOrder::user_end; }
 
     void process_steps(HostStepState) final;
     void process_steps(DeviceStepState) final;
+    void begin_run(HostStepState) final;
+    void begin_run(DeviceStepState) final;
+    void begin_run(CoreParams const&, CoreStateHost&) final;
+    void begin_run(CoreParams const&, CoreStateDevice&) final;
     void step(CoreParams const&, CoreStateHost&) const final;
     void step(CoreParams const&, CoreStateDevice&) const final;
+    void complete_step(CoreParams const&, CoreStateHost&) const final;
+    void complete_step(CoreParams const&, CoreStateDevice&) const final;
 
   private:
     std::vector<G4ParticleDefinition const*> particles_;
@@ -93,6 +103,32 @@ inline void GeantSteppingAction::step(CoreParams const&, CoreStateHost&) const
     CELER_ASSERT_UNREACHABLE();
 }
 inline void GeantSteppingAction::step(CoreParams const&, CoreStateDevice&) const
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+inline void GeantSteppingAction::begin_run(HostStepState)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+inline void GeantSteppingAction::begin_run(DeviceStepState)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+inline void GeantSteppingAction::begin_run(CoreParams const&, CoreStateHost&)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+inline void GeantSteppingAction::begin_run(CoreParams const&, CoreStateDevice&)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+inline void GeantSteppingAction::complete_step(CoreParams const&,
+                                               CoreStateHost&) const
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+inline void GeantSteppingAction::complete_step(CoreParams const&,
+                                               CoreStateDevice&) const
 {
     CELER_ASSERT_UNREACHABLE();
 }

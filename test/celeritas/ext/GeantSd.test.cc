@@ -16,14 +16,21 @@
 
 #include "corecel/ScopedLogStorer.hh"
 #include "corecel/io/Logger.hh"
+#include "corecel/sys/ActionRegistry.hh"
+#include "corecel/sys/Device.hh"
 #include "geocel/GeantGeoUtils.hh"
+#include "geocel/UnitUtils.hh"
 #include "geocel/VolumeParams.hh"
 #include "celeritas/SimpleCmsTestBase.hh"
 #include "celeritas/ext/GeantSdOutput.hh"
 #include "celeritas/geo/CoreGeoParams.hh"
+#include "celeritas/global/Stepper.hh"
 #include "celeritas/inp/Scoring.hh"
+#include "celeritas/phys/ParticleParams.hh"
+#include "celeritas/user/StepCollector.hh"
 
 #include "SensDetTestBase.hh"
+#include "SimpleSensitiveDetector.hh"
 #include "celeritas_test.hh"
 
 namespace celeritas
@@ -108,6 +115,45 @@ class SimpleCmsTest : public SensDetTestBase, public SimpleCmsTestBase
         return to_string(out);
     }
 
+    template<MemSpace M>
+    void test_async()
+    {
+        this->disable_status_checker();
+        auto manager = std::make_shared<GeantSd>(this->make_hit_manager());
+        auto collector
+            = StepCollector::make_and_insert(*this->core(), {manager});
+        if constexpr (M == MemSpace::device)
+            device().create_streams(1);
+        StepperInput inp;
+        inp.params = this->core();
+        inp.stream_id = StreamId{0};
+        inp.num_track_slots = 2;
+        inp.actions = std::make_shared<ActionSequence>(
+            *this->action_reg(), ActionSequence::Options{});
+        Stepper<M> step(inp);
+        auto const& hits = this->detectors().at("em_calorimeter")->hits();
+        step.warm_up();
+        EXPECT_TRUE(hits.energy_deposition.empty());
+
+        Primary primary;
+        primary.particle_id = this->particle()->find(pdg::gamma());
+        primary.energy = units::MevEnergy{1};
+        primary.position = from_cm(Real3{130, 0, 0});
+        primary.direction = {1, 0, 0};
+        primary.event_id = EventId{0};
+        primary.primary_id = PrimaryId{0};
+        step.async({&primary, 1});
+        EXPECT_TRUE(hits.energy_deposition.empty());
+        for (int i = 0; i < 2; ++i)
+        {
+            static_cast<void>(step.ready());
+            step.wait();
+            EXPECT_TRUE(hits.energy_deposition.empty());
+        }
+        step.get();
+        EXPECT_EQ(1, hits.energy_deposition.size());
+    }
+
   protected:
     inp::GeantSd sd_setup_;
     ::celeritas::test::ScopedLogStorer scoped_log_{&celeritas::world_logger()};
@@ -116,6 +162,16 @@ class SimpleCmsTest : public SensDetTestBase, public SimpleCmsTestBase
 };
 
 G4LogicalVolume const* SimpleCmsTest::detached_lv{nullptr};
+
+TEST_F(SimpleCmsTest, async_host)
+{
+    this->test_async<MemSpace::host>();
+}
+
+TEST_F(SimpleCmsTest, TEST_IF_CELER_DEVICE(async_device))
+{
+    this->test_async<MemSpace::device>();
+}
 
 TEST_F(SimpleCmsTest, persistent_selection)
 {

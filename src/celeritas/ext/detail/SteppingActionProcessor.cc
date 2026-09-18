@@ -17,8 +17,6 @@
 
 #include "corecel/cont/Range.hh"
 #include "corecel/data/Copier.hh"
-#include "corecel/sys/Device.hh"
-#include "corecel/sys/Stream.hh"
 #include "celeritas/global/CoreState.hh"
 
 namespace celeritas
@@ -81,6 +79,24 @@ SteppingActionProcessor::SteppingActionProcessor(VecParticle const& particles,
 }
 
 //---------------------------------------------------------------------------//
+//! Prepare the worker's step storage before transport begins.
+template<MemSpace M>
+void SteppingActionProcessor::initialize(
+    StepStateData<Ownership::reference, M> const& state)
+{
+    this->validate_thread();
+    steps_.initialize(state);
+}
+
+//! Allocate birth storage before any transfers can be submitted.
+void SteppingActionProcessor::initialize_births(size_type capacity)
+{
+    this->validate_thread();
+    CELER_VALIDATE(!steps_.pending(),
+                   << "undelivered Geant4 stepping callback batch");
+    births_.resize(capacity);
+}
+
 void SteppingActionProcessor::save_steps(HostRef<StepStateData> const& state)
 {
     this->save_steps_impl(state);
@@ -104,47 +120,65 @@ void SteppingActionProcessor::save_steps_impl(
     StepStateData<Ownership::reference, M> const& state)
 {
     this->validate_thread();
-    CELER_VALIDATE(!pending_, << "undelivered Geant4 stepping callback batch");
-    copy_steps(&output_, state);
-    pending_ = true;
+    steps_.capture(state);
+    births_ready_ = false;
 }
 
 //---------------------------------------------------------------------------//
 template<MemSpace M>
-void SteppingActionProcessor::dispatch_impl(CoreState<M>& state)
+void SteppingActionProcessor::save_births(CoreState<M>& state)
 {
     this->validate_thread();
-    CELER_VALIDATE(pending_, << "missing completed-step snapshot");
-    if (state.warming_up())
-    {
-        CELER_VALIDATE(!output_,
-                       << "active steps during Geant4 callback warmup");
-        pending_ = false;
-        return;
-    }
+    CELER_VALIDATE(steps_.pending() && !births_ready_,
+                   << "missing step snapshot or repeated secondary capture");
     auto const& source = state.ref().init.secondary_births;
-    births_.resize(source.size());
+    CELER_VALIDATE(births_.size() == source.size(),
+                   << "secondary snapshot capacity changed during transport");
     if (!births_.empty())
     {
         Copier<SecondaryBirth, MemSpace::host>{make_span(births_),
                                                state.stream_id()}(
             M, source[AllItems<SecondaryBirth, M>{}]);
-        if constexpr (M == MemSpace::device)
-        {
-            device().stream(state.stream_id()).sync();
-        }
     }
-    this->dispatch(output_, make_span(births_));
-    pending_ = false;
+    births_ready_ = true;
 }
+
+//---------------------------------------------------------------------------//
+//! Deliver completed snapshots after the step event, without stream waits.
+template<MemSpace M>
+void SteppingActionProcessor::dispatch_impl(CoreState<M>& state)
+{
+    this->validate_thread();
+    CELER_VALIDATE(births_ready_, << "missing secondary snapshot");
+    auto const& output = steps_.complete();
+    if (state.warming_up())
+    {
+        CELER_VALIDATE(!output,
+                       << "active steps during Geant4 callback warmup");
+    }
+    else
+    {
+        this->dispatch(output, make_span(births_));
+    }
+    steps_.clear();
+    births_ready_ = false;
+}
+
+template void SteppingActionProcessor::initialize(
+    HostRef<StepStateData> const&);
+template void SteppingActionProcessor::initialize(
+    DeviceRef<StepStateData> const&);
+template void SteppingActionProcessor::save_births(CoreState<MemSpace::host>&);
+template void SteppingActionProcessor::save_births(
+    CoreState<MemSpace::device>&);
 
 //---------------------------------------------------------------------------//
 /*!
  * Reconstruct parents before their children and invoke Geant4's action chain.
  *
- * Sensitive detectors have already run at user_post. Global dispatch goes
- * through the registered object (including composite actions), followed by
- * the regional action selected from the pre-step volume.
+ * Sensitive detector completion callbacks have already run. Global dispatch
+ * goes through the registered object (including composite actions), followed
+ * by the regional action selected from the pre-step volume.
  */
 void SteppingActionProcessor::dispatch(StepOutput const& steps,
                                        Span<SecondaryBirth const> births)

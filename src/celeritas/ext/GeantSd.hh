@@ -85,11 +85,16 @@ class GeantSd final : public StepInterface
     // Selection of data required for this interface
     StepSelection selection() const final { return selection_; }
 
-    // Process CPU-generated hits
+    void begin_run(HostStepState) final;
+    void begin_run(DeviceStepState) final;
+
+    // Capture CPU-generated hits
     void process_steps(HostStepState) final;
 
-    // Process device-generated hits
+    // Capture device-generated hits
     void process_steps(DeviceStepState) final;
+
+    void process_pending_steps(StreamId) final;
 
     //// ACCESSORS ////
 
@@ -155,6 +160,21 @@ inline void GeantSd::process_steps(HostStepState)
 }
 
 inline void GeantSd::process_steps(DeviceStepState)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+
+inline void GeantSd::begin_run(HostStepState)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+
+inline void GeantSd::begin_run(DeviceStepState)
+{
+    CELER_ASSERT_UNREACHABLE();
+}
+
+inline void GeantSd::process_pending_steps(StreamId)
 {
     CELER_ASSERT_UNREACHABLE();
 }

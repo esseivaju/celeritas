@@ -20,12 +20,18 @@
 #include <G4UserSteppingAction.hh>
 #include <G4VUserTrackInformation.hh>
 
+#include "corecel/sys/ActionRegistry.hh"
 #include "geocel/GeantGeoParams.hh"
 #include "geocel/UnitUtils.hh"
 #include "geocel/VolumeParams.hh"
 #include "celeritas/SimpleCmsTestBase.hh"
 #include "celeritas/UnitTypes.hh"
+#include "celeritas/ext/GeantSteppingAction.hh"
 #include "celeritas/global/CoreState.hh"
+#include "celeritas/global/Stepper.hh"
+#include "celeritas/phys/ParticleParams.hh"
+#include "celeritas/track/TrackInitParams.hh"
+#include "celeritas/user/StepCollector.hh"
 
 #include "celeritas_test.hh"
 
@@ -136,6 +142,91 @@ class SteppingActionProcessorTest : public ::celeritas::test::SimpleCmsTestBase
     std::unique_ptr<SteppingActionProcessor> processor_;
     std::unique_ptr<G4UserSteppingAction> action_;
 };
+
+class AsyncSteppingActionTest : public SteppingActionProcessorTest
+{
+  protected:
+    SPConstTrackInit build_init() final
+    {
+        TrackInitParams::Input inp;
+        inp.capacity = 8192;
+        inp.max_events = 1;
+        inp.save_secondaries = true;
+        return std::make_shared<TrackInitParams>(inp);
+    }
+
+    template<MemSpace M>
+    void test_async()
+    {
+        this->disable_status_checker();
+        auto core = this->core();
+        auto action = std::make_shared<GeantSteppingAction>(
+            this->action_reg()->next_id(), *this->particle(), 1);
+        this->action_reg()->insert(action);
+        auto processor = action->make_local_processor(StreamId{0});
+        auto collector
+            = StepCollector::make_and_insert(*core, {action}, "geant-user");
+        auto& tracks = *processor->track_reconstruction();
+        tracks.init_event();
+        G4Track original(
+            new G4DynamicParticle(particles_[0], {1, 0, 0}, 1), 0, {});
+        original.SetTrackID(41);
+        Primary primary;
+        primary.primary_id = tracks.acquire(original);
+        primary.particle_id = this->particle()->find(pdg::gamma());
+        primary.energy = units::MevEnergy{1};
+        primary.position = ::celeritas::test::from_cm(Real3{100, 0, 0});
+        primary.direction = {1, 0, 0};
+        primary.event_id = EventId{0};
+        int calls = 0;
+        this->set_action(
+            std::make_unique<FunctionAction>([&](G4Step const*) { ++calls; }));
+        if constexpr (M == MemSpace::device)
+            device().create_streams(1);
+        StepperInput inp;
+        inp.params = core;
+        inp.stream_id = StreamId{0};
+        inp.num_track_slots = 2;
+        inp.actions = std::make_shared<ActionSequence>(
+            *this->action_reg(), ActionSequence::Options{});
+        Stepper<M> step(inp);
+        step.warm_up();
+        EXPECT_EQ(0, calls);
+        step.async({&primary, 1});
+        // Stage a later primary without consuming or overwriting snapshots.
+        original.SetTrackID(42);
+        primary.primary_id = tracks.acquire(original);
+        step.push_primary(primary);
+        step.stage_primaries();
+        for (int i = 0; i < 4; ++i)
+        {
+            auto before = calls;
+            static_cast<void>(step.ready());
+            step.wait();
+            step.wait();
+            EXPECT_EQ(before, calls);
+            auto result = step.get();
+            EXPECT_EQ(before + result.active, calls);
+            EXPECT_THROW(step.get(), RuntimeError);
+            if (i < 3)
+            {
+                step.async();
+                EXPECT_EQ(before + result.active, calls);
+            }
+        }
+        EXPECT_GT(calls, 0);
+    }
+};
+
+TEST_F(AsyncSteppingActionTest, host)
+{
+    this->test_async<MemSpace::host>();
+}
+
+TEST_F(AsyncSteppingActionTest, TEST_IF_CELER_DEVICE(device))
+{
+    this->test_async<MemSpace::device>();
+}
 
 TEST_F(SteppingActionProcessorTest, absent_and_single)
 {
@@ -276,14 +367,19 @@ TEST_F(SteppingActionProcessorTest, warmup_inactive_and_failed_batch)
     HostRef<StepStateData> ref;
     ref = state;
     CoreState<MemSpace::host> core_state(*this->core(), StreamId{0}, 1);
+    processor_->initialize(ref);
+    processor_->initialize_births(
+        core_state.ref().init.secondary_births.size());
 
     // Inactive slots are ignored during warmup and ordinary iterations.
     state.data.track_id[TrackSlotId{0}] = {};
     core_state.warming_up(true);
     processor_->save_steps(ref);
+    processor_->save_births(core_state);
     processor_->dispatch(core_state);
     core_state.warming_up(false);
     processor_->save_steps(ref);
+    processor_->save_births(core_state);
     processor_->dispatch(core_state);
 
     auto out = this->step();
@@ -319,6 +415,8 @@ TEST_F(SteppingActionProcessorTest, warmup_inactive_and_failed_batch)
         throw std::logic_error("callback failed");
     }));
     processor_->save_steps(ref);
+    processor_->save_births(core_state);
+    EXPECT_EQ(0, calls);
     EXPECT_THROW(processor_->dispatch(core_state), std::logic_error);
     EXPECT_EQ(1, calls);
     // A new snapshot must not overwrite the failed batch or replay it.

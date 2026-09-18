@@ -68,10 +68,51 @@ void GeantSteppingAction::process_steps(DeviceStepState state)
 
 void GeantSteppingAction::step(CoreParams const&, CoreStateHost& state) const
 {
-    this->processor(state.stream_id())->dispatch(state);
+    this->processor(state.stream_id())->save_births(state);
 }
 
 void GeantSteppingAction::step(CoreParams const&, CoreStateDevice& state) const
+{
+    this->processor(state.stream_id())->save_births(state);
+}
+
+//---------------------------------------------------------------------------//
+//! Allocate selected step storage before transport.
+void GeantSteppingAction::begin_run(HostStepState state)
+{
+    this->processor(state.stream_id)->initialize(state.steps);
+}
+
+//! Allocate pinned step storage before transport.
+void GeantSteppingAction::begin_run(DeviceStepState state)
+{
+    this->processor(state.stream_id)->initialize(state.steps);
+}
+
+//! Allocate birth storage once using the secondary stack capacity.
+void GeantSteppingAction::begin_run(CoreParams const&, CoreStateHost& state)
+{
+    this->processor(state.stream_id())
+        ->initialize_births(state.ref().init.secondary_births.size());
+}
+
+//! Allocate pinned birth storage before any device step is submitted.
+void GeantSteppingAction::begin_run(CoreParams const&, CoreStateDevice& state)
+{
+    this->processor(state.stream_id())
+        ->initialize_births(state.ref().init.secondary_births.size());
+}
+
+//! Invoke registered actions after all sensitive detector callbacks.
+void GeantSteppingAction::complete_step(CoreParams const&,
+                                        CoreStateHost& state) const
+{
+    this->processor(state.stream_id())->dispatch(state);
+}
+
+//! Dispatch saved device results without waiting for subsequently staged work.
+void GeantSteppingAction::complete_step(CoreParams const&,
+                                        CoreStateDevice& state) const
 {
     this->processor(state.stream_id())->dispatch(state);
 }

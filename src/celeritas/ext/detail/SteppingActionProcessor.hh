@@ -12,6 +12,7 @@
 #include "celeritas/global/ActionInterface.hh"
 #include "celeritas/track/TrackInitData.hh"
 #include "celeritas/user/StepInterface.hh"
+#include "celeritas/user/StepSnapshot.hh"
 
 #include "GeantStepReconstruction.hh"
 
@@ -37,8 +38,14 @@ class SteppingActionProcessor
     // Construct the worker-local step and enable persistent metadata
     SteppingActionProcessor(VecParticle const&, SPTracks = {});
 
+    template<MemSpace M>
+    void initialize(StepStateData<Ownership::reference, M> const&);
+    void initialize_births(size_type);
+
     void save_steps(HostRef<StepStateData> const&);
     void save_steps(DeviceRef<StepStateData> const&);
+    template<MemSpace M>
+    void save_births(CoreState<M>&);
     void dispatch(CoreState<MemSpace::host>&);
     void dispatch(CoreState<MemSpace::device>&);
 
@@ -54,9 +61,9 @@ class SteppingActionProcessor
   private:
     std::thread::id thread_;
     GeantStepReconstruction reconstruction_;
-    StepOutput output_;
+    StepSnapshot steps_;
     std::vector<SecondaryBirth, PinnedAllocator<SecondaryBirth>> births_;
-    bool pending_{false};
+    bool births_ready_{false};
 
     template<MemSpace M>
     void save_steps_impl(StepStateData<Ownership::reference, M> const&);

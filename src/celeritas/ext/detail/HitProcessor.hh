@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #include <G4TouchableHandle.hh>
@@ -18,6 +19,7 @@
 #include "celeritas/Types.hh"
 #include "celeritas/user/DetectorSteps.hh"
 #include "celeritas/user/StepData.hh"
+#include "celeritas/user/StepSnapshot.hh"
 
 #include "GeantStepReconstruction.hh"
 #include "TouchableUpdaterInterface.hh"
@@ -49,7 +51,8 @@ namespace detail
  * thread-local object allocators for the navigation state and tracks mean this
  * class \b must be destroyed on the same thread on which it was created.
  *
- * Call operator:
+ * The state call operators capture an owned snapshot. After the producing
+ * step completes, \c process_pending_steps performs the following:
  * - Loop over detector steps
  * - Update step attributes based on hit selection for the detector (TODO:
  *   selection is global for now)
@@ -86,11 +89,17 @@ class HitProcessor
     ~HitProcessor() = default;
     CELER_DEFAULT_MOVE_DELETE_COPY(HitProcessor);
 
-    // Process CPU-generated hits
+    template<MemSpace M>
+    void initialize(StepStateData<Ownership::reference, M> const&);
+
+    // Capture CPU-generated hits
     void operator()(StepStateHostRef const&);
 
-    // Process device-generated hits
+    // Capture device-generated hits
     void operator()(StepStateDeviceRef const&);
+
+    // Dispatch captured hits after the producing step completes
+    void process_pending_steps();
 
     // Generate and call hits from a detector output (for testing)
     void operator()(DetectorStepOutput const& out) const;
@@ -119,11 +128,14 @@ class HitProcessor
     GeantStepReconstruction reconstruction_;
     //! Map detector IDs to sensitive detectors
     std::vector<G4VSensitiveDetector*> detectors_;
-    //! Temporary CPU hit information
-    DetectorStepOutput steps_;
+    //! Owned snapshot protected until completion and successful delivery
+    StepSnapshot steps_;
+    std::thread::id thread_;
 
     //! Accumulated number of hits
     size_type num_hits_{0};
+
+    void validate_thread() const;
 };
 
 //---------------------------------------------------------------------------//

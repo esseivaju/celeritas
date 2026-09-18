@@ -171,12 +171,31 @@ void GeantSd::process_steps(HostStepState state)
 
 //---------------------------------------------------------------------------//
 /*!
- * Process detector tallies (GPU).
+ * Capture detector tallies (GPU) without waiting for the transfer.
  */
 void GeantSd::process_steps(DeviceStepState state)
 {
     auto& process_hits = this->get_local_hit_processor(state.stream_id);
     process_hits(state.steps);
+}
+
+//---------------------------------------------------------------------------//
+//! Preallocate the worker's snapshot before transport.
+void GeantSd::begin_run(HostStepState state)
+{
+    this->get_local_hit_processor(state.stream_id).initialize(state.steps);
+}
+
+//! Preallocate pinned storage before any device step is submitted.
+void GeantSd::begin_run(DeviceStepState state)
+{
+    this->get_local_hit_processor(state.stream_id).initialize(state.steps);
+}
+
+//! Deliver hits after the producing step completes.
+void GeantSd::process_pending_steps(StreamId stream)
+{
+    this->get_local_hit_processor(stream).process_pending_steps();
 }
 
 //---------------------------------------------------------------------------//
