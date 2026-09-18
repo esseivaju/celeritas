@@ -9,12 +9,15 @@
 #include <G4DynamicParticle.hh>
 #include <G4ParticleDefinition.hh>
 #include <G4ParticleTable.hh>
+#include <G4PhysicsModelCatalog.hh>
 #include <G4ProcessType.hh>
 #include <G4Step.hh>
 #include <G4StepPoint.hh>
 #include <G4Track.hh>
+#include <G4VAuxiliaryTrackInformation.hh>
 #include <G4VProcess.hh>
 #include <G4VUserTrackInformation.hh>
+#include <G4Version.hh>
 
 #include "corecel/Config.hh"
 
@@ -47,6 +50,16 @@ class CountedTrackInformation : public G4VUserTrackInformation
   public:
     explicit CountedTrackInformation(int* count) : count_(count) {}
     ~CountedTrackInformation() override { ++*count_; }
+
+  private:
+    int* count_;
+};
+
+class CountedAuxInformation : public G4VAuxiliaryTrackInformation
+{
+  public:
+    explicit CountedAuxInformation(int* count) : count_(count) {}
+    ~CountedAuxInformation() override { ++*count_; }
 
   private:
     int* count_;
@@ -286,6 +299,34 @@ TEST_F(GtrTest, persistent_tracks)
         ++test_cur_event;
         recon.init_event();
     }
+}
+
+TEST_F(GtrTest, persistent_auxiliary_metadata)
+{
+    GeantTrackReconstruction recon(particles_, step_);
+    recon.enable_track_mapping();
+    recon.init_event();
+    int destroyed = 0;
+#if G4VERSION_NUMBER >= 1100
+    int model = G4PhysicsModelCatalog::GetModelID(0);
+#else
+    int model = G4PhysicsModelCatalog::Register("celeritas-test");
+#endif
+    auto* info = new CountedAuxInformation(&destroyed);
+    PrimaryId pid;
+    {
+        G4Track primary(
+            new G4DynamicParticle(particles_[0], {0, 0, 1}, 10), 0, {});
+        primary.SetTrackID(17);
+        primary.SetAuxiliaryTrackInformation(model, info);
+        pid = recon.acquire(primary);
+        EXPECT_EQ(nullptr, primary.GetAuxiliaryTrackInformation(model));
+    }
+    EXPECT_EQ(0, destroyed);
+    auto& track = recon.view(ParticleId{0}, pid, TrackId{0}, {});
+    EXPECT_EQ(info, track.GetAuxiliaryTrackInformation(model));
+    recon.clear();
+    EXPECT_EQ(1, destroyed);
 }
 
 //---------------------------------------------------------------------------//

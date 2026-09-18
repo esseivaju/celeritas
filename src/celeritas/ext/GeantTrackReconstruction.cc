@@ -223,6 +223,17 @@ PrimaryId GeantTrackReconstruction::acquire(G4Track& primary)
         auto& saved = g4_track_data_.back();
         saved.restore(*track);
         saved.release_user_info();
+        // The Geant4 copy constructor drops auxiliary metadata as well.
+        // Transfer each pointer before the original offloaded track is deleted.
+        if (auto* info = primary.GetAuxiliaryTrackInformationMap())
+        {
+            while (!info->empty())
+            {
+                auto const& entry = *info->begin();
+                track->SetAuxiliaryTrackInformation(entry.first, entry.second);
+                primary.RemoveAuxiliaryTrackInformation(entry.first);
+            }
+        }
         // Geant4's copy constructor resets transport counters.
         track->AddTrackLength(
             primary.GetTrackLength() - track->GetTrackLength());

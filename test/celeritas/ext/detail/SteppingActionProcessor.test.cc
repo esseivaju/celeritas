@@ -25,6 +25,7 @@
 #include "geocel/VolumeParams.hh"
 #include "celeritas/SimpleCmsTestBase.hh"
 #include "celeritas/UnitTypes.hh"
+#include "celeritas/global/CoreState.hh"
 
 #include "celeritas_test.hh"
 
@@ -261,6 +262,68 @@ TEST_F(SteppingActionProcessorTest, terminal_and_world_exit)
     }));
     processor_->dispatch(out, {});
     EXPECT_EQ(1, called);
+}
+
+TEST_F(SteppingActionProcessorTest, warmup_inactive_and_failed_batch)
+{
+    HostVal<StepParamsData> params;
+    params.selection = StepSelection::all();
+    params.num_volume_levels = 2;
+    HostCRef<StepParamsData> params_ref;
+    params_ref = params;
+    HostVal<StepStateData> state;
+    resize(&state, params_ref, StreamId{0}, 1);
+    HostRef<StepStateData> ref;
+    ref = state;
+    CoreState<MemSpace::host> core_state(*this->core(), StreamId{0}, 1);
+
+    // Inactive slots are ignored during warmup and ordinary iterations.
+    state.data.track_id[TrackSlotId{0}] = {};
+    core_state.warming_up(true);
+    processor_->save_steps(ref);
+    processor_->dispatch(core_state);
+    core_state.warming_up(false);
+    processor_->save_steps(ref);
+    processor_->dispatch(core_state);
+
+    auto out = this->step();
+    auto assign = [](auto const& src, auto& dst) {
+        std::copy(src.begin(), src.end(), dst.data().get());
+    };
+#define COPY_STEP(FIELD) assign(out.FIELD, state.data.FIELD)
+    COPY_STEP(track_id);
+    COPY_STEP(parent_id);
+    COPY_STEP(primary_id);
+    COPY_STEP(event_id);
+    COPY_STEP(particle_id);
+    COPY_STEP(track_step_count);
+    COPY_STEP(track_status);
+    COPY_STEP(step_length);
+    COPY_STEP(weight);
+    COPY_STEP(energy_deposition);
+#undef COPY_STEP
+    for (auto sp : {StepPoint::pre, StepPoint::post})
+    {
+#define COPY_POINT(FIELD) \
+    assign(out.points[sp].FIELD, state.data.points[sp].FIELD)
+        COPY_POINT(pos);
+        COPY_POINT(dir);
+        COPY_POINT(time);
+        COPY_POINT(energy);
+        COPY_POINT(volume_instance_ids);
+#undef COPY_POINT
+    }
+    int calls = 0;
+    this->set_action(std::make_unique<FunctionAction>([&](G4Step const*) {
+        ++calls;
+        throw std::logic_error("callback failed");
+    }));
+    processor_->save_steps(ref);
+    EXPECT_THROW(processor_->dispatch(core_state), std::logic_error);
+    EXPECT_EQ(1, calls);
+    // A new snapshot must not overwrite the failed batch or replay it.
+    EXPECT_THROW(processor_->save_steps(ref), RuntimeError);
+    EXPECT_EQ(1, calls);
 }
 
 TEST_F(SteppingActionProcessorTest, mutations_exceptions_and_worker)
