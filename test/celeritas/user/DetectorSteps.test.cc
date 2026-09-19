@@ -107,13 +107,19 @@ class DetectorStepsTest : public ::celeritas::test::Test
         return result;
     }
 
-    HostParamsRef params() const { return params_.host_ref(); }
+    HostParamsRef params(bool filtered = true) const
+    {
+        auto result = params_.host_ref();
+        if (!filtered)
+            result.detector = {};
+        return result;
+    }
 
-    HostStates build_states(size_type count)
+    HostStates build_states(size_type count, bool filtered = true)
     {
         CELER_EXPECT(count > 0);
         HostStates result;
-        resize(&result, this->params(), StreamId{0}, count);
+        resize(&result, this->params(filtered), StreamId{0}, count);
         auto& step = result.data;
         result.num_volume_levels = this->params().num_volume_levels;
 
@@ -159,7 +165,8 @@ class DetectorStepsTest : public ::celeritas::test::Test
             DetectorId det{tid.get() % 4};
             if (!step.track_id[tid] || det == DetectorId{3})
                 det = {};
-            step.detector_id[tid] = det;
+            if (!step.detector_id.empty())
+                step.detector_id[tid] = det;
 
             if (!step.event_id.empty())
                 step.event_id[tid] = EventId(i++);
@@ -186,9 +193,7 @@ class DetectorStepsTest : public ::celeritas::test::Test
 
     void test_snapshot(bool filtered)
     {
-        auto state = this->build_states(32);
-        if (!filtered)
-            state.data.detector_id = {};
+        auto state = this->build_states(32, filtered);
         auto ref = make_ref(state);
         StepSnapshot snapshot;
         EXPECT_EQ(0, snapshot.buffer_size());
@@ -288,10 +293,16 @@ TEST_F(DetectorStepsTest, TEST_IF_CELER_DEVICE(snapshot_device))
 
 TEST_F(DetectorStepsTest, unfiltered)
 {
-    auto states = this->build_states(12);
-    // Remove detector filtering: include active tracks outside detectors.
-    states.data.detector_id = {};
     StepOutput output;
+    {
+        auto filtered = this->build_states(12);
+        copy_steps(&output, make_ref(filtered));
+        ASSERT_FALSE(output.detector_id.empty());
+    }
+
+    // Reuse the output with active tracks outside detectors included.
+    auto states = this->build_states(12, false);
+    ASSERT_TRUE(states.data.detector_id.empty());
     copy_steps(&output, make_ref(states));
     EXPECT_EQ(9, output.size());
     EXPECT_EQ(TrackStatus::killed, output.track_status.front());
@@ -305,25 +316,45 @@ TEST_F(DetectorStepsTest, unfiltered)
     }
     copy_steps(&output, make_ref(states));
     EXPECT_FALSE(output);
-    EXPECT_TRUE(output.points[StepPoint::pre].volume_id.empty());
+    StepOutput empty;
+    empty.num_volume_levels = states.num_volume_levels;
+    expect_output_eq(empty, output);
 }
 
 TEST_F(DetectorStepsTest, TEST_IF_CELER_DEVICE(unfiltered_device))
 {
-    auto host = this->build_states(12);
-    host.data.detector_id = {};
-    DeviceStates dev;
-    resize(&dev, this->params(), StreamId{0}, host.size());
-    dev.data = host.data;
-    StepOutput expected;
     StepOutput actual;
+    {
+        auto host = this->build_states(12);
+        DeviceStates filtered;
+        resize(&filtered, this->params(), StreamId{0}, host.size());
+        filtered.data = host.data;
+        copy_steps(&actual, make_ref(filtered));
+        ASSERT_FALSE(actual.detector_id.empty());
+    }
+
+    // Both data and scratch must be allocated without detector filtering.
+    auto host = this->build_states(12, false);
+    DeviceStates dev;
+    resize(&dev, this->params(false), StreamId{0}, host.size());
+    dev.data = host.data;
+    ASSERT_TRUE(dev.data.detector_id.empty());
+    ASSERT_TRUE(dev.scratch.detector_id.empty());
+    StepOutput expected;
     copy_steps(&expected, make_ref(host));
     copy_steps(&actual, make_ref(dev));
-    EXPECT_VEC_EQ(expected.track_id, actual.track_id);
-    EXPECT_VEC_EQ(expected.track_status, actual.track_status);
-    EXPECT_VEC_EQ(expected.points[StepPoint::pre].volume_id,
-                  actual.points[StepPoint::pre].volume_id);
+    EXPECT_EQ(9, actual.size());
+    expect_output_eq(expected, actual);
     EXPECT_TRUE(actual.detector_id.empty());
+
+    for (auto tid : range(TrackSlotId{host.size()}))
+        host.data.track_id[tid] = {};
+    dev.data = host.data;
+    copy_steps(&actual, make_ref(dev));
+    EXPECT_FALSE(actual);
+    StepOutput empty;
+    empty.num_volume_levels = host.num_volume_levels;
+    expect_output_eq(empty, actual);
 }
 
 TEST_F(DetectorStepsTest, host)

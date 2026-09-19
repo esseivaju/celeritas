@@ -77,6 +77,12 @@ file is included in the owning library. Host-only builds cannot detect missing
 device symbols: link the affected tests with CUDA/HIP when available, and state
 explicitly when that validation remains outstanding.
 
+When constructing tests for optional gathered fields, configure the parameters
+before allocating state so data and device scratch use the same selection. Do
+not simulate unfiltered collection by clearing only `data.detector_id` after
+allocation. Exercise filtered-to-unfiltered and nonempty-to-empty transitions
+with the same output object in both host and device tests.
+
 ## Documentation
 
 - Add Doxygen documentation to **definitions**, not declarations, when adding code. Prefer doxygen-style markup `\c`, `<code>` to Markdown in such blocks.
