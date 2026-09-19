@@ -71,6 +71,12 @@ cmake -B build -G Ninja && cd build && ninja && ctest
 
 Object files and tests may have different paths and test names than you expect (`src/celeritas/ext/GeantImporter.cc` → `src/celeritas/CMakeFiles/celeritas_geant4.dir/ext/GeantImporter.cc.o` and `celeritas/ext/GeantImporter.test.cc` → `test/celeritas/ext_GeantImporter`), and some test executables are run as distinct CTest tests due to environment variables and side effects (`ctest --show-only | grep GeantImporter` → `Test #211: celeritas/ext/GeantImporter:DuneCryostat.*`).
 
+Before using `fill` or another out-of-line device template with a new collection
+value type, check its explicit instantiations and confirm the defining `.cu`
+file is included in the owning library. Host-only builds cannot detect missing
+device symbols: link the affected tests with CUDA/HIP when available, and state
+explicitly when that validation remains outstanding.
+
 ## Documentation
 
 - Add Doxygen documentation to **definitions**, not declarations, when adding code. Prefer doxygen-style markup `\c`, `<code>` to Markdown in such blocks.
