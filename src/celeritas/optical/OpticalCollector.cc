@@ -124,9 +124,13 @@ GeneratorRegistry const& OpticalCollector::gen_reg() const
 //---------------------------------------------------------------------------//
 /*!
  * Get and reset cumulative statistics on optical generation from a state.
+ *
+ * This synchronizes the generator counters with the device.
  */
 CounterAccumStats OpticalCollector::exchange_counters(AuxStateVec& aux) const
 {
+    this->gen_reg().sync_counters(aux);
+
     auto& state
         = dynamic_cast<optical::CoreStateBase&>(aux.at(launch_->aux_id()));
     auto& accum = state.accum();
@@ -144,10 +148,15 @@ CounterAccumStats OpticalCollector::exchange_counters(AuxStateVec& aux) const
 //---------------------------------------------------------------------------//
 /*!
  * Get info on the number of tracks in the buffer.
+ *
+ * This synchronizes the generator counters with the device, so it should not
+ * be called while stepping.
  */
-auto OpticalCollector::buffer_counts(AuxStateVec const& aux) const
+auto OpticalCollector::buffer_counts(AuxStateVec& aux) const
     -> OpticalBufferSize
 {
+    this->gen_reg().sync_counters(aux);
+
     OpticalBufferSize result;
 
     for (auto id : range(GeneratorId{this->gen_reg().size()}))
