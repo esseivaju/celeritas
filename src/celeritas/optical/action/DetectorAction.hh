@@ -7,11 +7,11 @@
 //---------------------------------------------------------------------------//
 #pragma once
 
-#include <vector>
+#include <optional>
 
 #include "corecel/cont/Span.hh"
+#include "corecel/data/AsyncCompactedCopy.hh"
 #include "corecel/data/AuxInterface.hh"
-#include "corecel/data/PinnedAllocator.hh"
 #include "celeritas/inp/Scoring.hh"
 #include "celeritas/optical/DetectorData.hh"
 
@@ -36,8 +36,17 @@ namespace optical
  * slots), where invalid hits are pruned by slicing a span over the valid
  * prefix. A span of only valid hits is then passed into the user provided
  * callback function.
+ *
+ * On device, the valid hits are instead compacted into device scratch space
+ * and only those are copied to pinned host memory on the memcpy stream, using
+ * \c AsyncCompactedCopy . Since the optical transport loop waits for each
+ * step before starting the next, the hits of a step are copied while the next
+ * step runs and processed during the step after. The remaining hits are
+ * processed by \c end_transport , so the callback is called for every step,
+ * in order, before transport returns.
  */
 class DetectorAction final : public OpticalStepActionInterface,
+                             public OpticalEndTransportActionInterface,
                              public AuxParamsInterface
 {
   public:
@@ -46,6 +55,7 @@ class DetectorAction final : public OpticalStepActionInterface,
     using SPActionRegistry = std::shared_ptr<ActionRegistry>;
     using SPAuxParamsRegistry = std::shared_ptr<AuxParamsRegistry>;
     using CallbackFunc = inp::OpticalDetector::HitCallbackFunc;
+    using Hits = AsyncCompactedCopy<DetectorHit>;
     //!@}
 
   public:
@@ -66,6 +76,12 @@ class DetectorAction final : public OpticalStepActionInterface,
 
     //! Dependency ordering of the action
     StepActionOrder order() const final { return StepActionOrder::post; }
+
+    //! Host hits are processed during the step
+    void end_transport(CoreParams const&, CoreStateHost&) const final {}
+
+    // Process the remaining hits copied from device
+    void end_transport(CoreParams const&, CoreStateDevice&) const final;
 
     //!@{
     //! \name Action interface
@@ -96,8 +112,11 @@ class DetectorAction final : public OpticalStepActionInterface,
 
     //// HELPER FUNCTIONS ////
 
-    // Copy hits from device
-    Span<DetectorHit const> load_hits_sync(CoreStateDevice const&) const;
+    // Process the hits of the previous steps and copy the hits of the last
+    Hits& copy_hits_async(CoreStateDevice&) const;
+
+    // Process all hits remaining from device
+    void flush_hits(Hits&) const;
 
     // Send hits to the callback
     void callback_hits(Span<DetectorHit const>) const;
@@ -105,10 +124,10 @@ class DetectorAction final : public OpticalStepActionInterface,
 
 //---------------------------------------------------------------------------//
 /*!
- * Persistent per-stream storage for pruned detector hits on device.
+ * Persistent per-stream storage for compacted detector hits on device.
  *
- * The pinned buffer is allocated and sized once in \c
- * DetectorAction::create_state so that no reallocation occurs during
+ * The device scratch and pinned host buffers are allocated and sized once in
+ * \c DetectorAction::create_state so that no reallocation occurs during
  * stepping.
  *
  * This is \em only done when running on device; in host memory, we operate
@@ -116,9 +135,8 @@ class DetectorAction final : public OpticalStepActionInterface,
  */
 struct DetectorActionState : public AuxStateInterface
 {
-    using VecHit = std::vector<DetectorHit, PinnedAllocator<DetectorHit>>;
-
-    VecHit hits;
+    //! Compaction and copy of device hits
+    std::optional<AsyncCompactedCopy<DetectorHit>> hits;
 };
 
 //---------------------------------------------------------------------------//
