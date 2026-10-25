@@ -146,12 +146,13 @@ void WlsGeneratorAction::step_impl(CoreParams const& params,
 
     // Calculate the cumulative sum of the number of photons in the buffered
     // distributions, which determines which thread will generate photons
-    // from which distribution, and add the new photons to the pending count
+    // from which distribution. The new photons were already added to the
+    // core state's pending count when the distributions were created.
     detail::inclusive_scan_photons(buffer,
                                    aux_state.store.ref().offsets,
                                    bound,
                                    counters,
-                                   state.ref().init.counters,
+                                   {},
                                    state.stream_id());
 
     // Generate the optical photons from the distribution data. To avoid
