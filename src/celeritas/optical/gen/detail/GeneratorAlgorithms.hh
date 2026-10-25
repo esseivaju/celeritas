@@ -10,7 +10,11 @@
 #include "corecel/Types.hh"
 #include "corecel/cont/Span.hh"
 #include "corecel/data/Collection.hh"
+#include "corecel/data/ObserverPtr.hh"
 #include "corecel/math/Algorithms.hh"
+#include "corecel/sys/ThreadId.hh"
+
+#include "GeneratorCounterAlgorithms.hh"
 
 namespace celeritas
 {
@@ -45,34 +49,117 @@ inline CELER_FUNCTION size_type find_distribution_index(
 }
 
 //---------------------------------------------------------------------------//
-// Calculate the inclusive prefix sum of the number of optical photons
+/*!
+ * Get the number of photons in a buffered distribution.
+ *
+ * Indices past the current buffer size, which is read from the state's
+ * memory, contribute no photons. This allows fixed-size algorithms to be
+ * launched over an upper bound of the buffer size.
+ */
 template<class T>
-size_type inclusive_scan_photons(ItemsRef<T, MemSpace::host> const&,
-                                 ItemsRef<size_type, MemSpace::host> const&,
-                                 size_type,
-                                 StreamId);
-template<class T>
-size_type inclusive_scan_photons(ItemsRef<T, MemSpace::device> const&,
-                                 ItemsRef<size_type, MemSpace::device> const&,
-                                 size_type,
-                                 StreamId);
+struct BufferedPhotonCount
+{
+    ObserverPtr<T const, MemSpace::native> data;
+    ObserverPtr<size_type const, MemSpace::native> size;
+
+    CELER_FUNCTION size_type operator()(size_type i) const
+    {
+        return i < *size ? data.get()[i].num_photons : 0;
+    }
+};
 
 //---------------------------------------------------------------------------//
-// INLINE DEFINITIONS
+/*!
+ * Clear the buffered distributions past the current buffer size.
+ */
+template<class T>
+struct ClearTailExecutor
+{
+    ObserverPtr<T, MemSpace::native> data;
+    ObserverPtr<size_type const, MemSpace::native> size;
+
+    CELER_FUNCTION void operator()(ThreadId tid) const
+    {
+        if (!(tid.get() < *size))
+        {
+            data.get()[tid.get()] = T{};
+        }
+    }
+};
+
 //---------------------------------------------------------------------------//
+// Calculate the prefix sum of the photon counts and update the pending count
+template<class T>
+void inclusive_scan_photons(ItemsRef<T, MemSpace::host> const&,
+                            ItemsRef<size_type, MemSpace::host> const&,
+                            size_type,
+                            GenCountersObserver<MemSpace::host>,
+                            CoreStateCounterRef<MemSpace::host> const&,
+                            StreamId);
+template<class T>
+void inclusive_scan_photons(ItemsRef<T, MemSpace::device> const&,
+                            ItemsRef<size_type, MemSpace::device> const&,
+                            size_type,
+                            GenCountersObserver<MemSpace::device>,
+                            CoreStateCounterRef<MemSpace::device> const&,
+                            StreamId);
+
+// Compact the valid distributions and store the buffer size
+template<class T>
+void select_valid(ItemsRef<T, MemSpace::host> const&,
+                  size_type,
+                  GenCountersObserver<MemSpace::host>,
+                  StreamId);
+template<class T>
+void select_valid(ItemsRef<T, MemSpace::device> const&,
+                  size_type,
+                  GenCountersObserver<MemSpace::device>,
+                  StreamId);
+
+// Clear the distributions past the buffer size
+template<class T>
+void clear_tail(ItemsRef<T, MemSpace::host> const&,
+                size_type,
+                GenCountersObserver<MemSpace::host>,
+                StreamId);
+template<class T>
+void clear_tail(ItemsRef<T, MemSpace::device> const&,
+                size_type,
+                GenCountersObserver<MemSpace::device>,
+                StreamId);
+
 #if !CELER_USE_DEVICE
 template<class T>
-inline size_type inclusive_scan_photons(
+inline void inclusive_scan_photons(
     ItemsRef<T, MemSpace::device> const&,
     ItemsRef<size_type, MemSpace::device> const&,
     size_type,
+    GenCountersObserver<MemSpace::device>,
+    CoreStateCounterRef<MemSpace::device> const&,
     StreamId)
+{
+    CELER_NOT_CONFIGURED("CUDA OR HIP");
+}
+
+template<class T>
+inline void select_valid(ItemsRef<T, MemSpace::device> const&,
+                         size_type,
+                         GenCountersObserver<MemSpace::device>,
+                         StreamId)
+{
+    CELER_NOT_CONFIGURED("CUDA OR HIP");
+}
+
+template<class T>
+inline void clear_tail(ItemsRef<T, MemSpace::device> const&,
+                       size_type,
+                       GenCountersObserver<MemSpace::device>,
+                       StreamId)
 {
     CELER_NOT_CONFIGURED("CUDA OR HIP");
 }
 #endif
 
-//---------------------------------------------------------------------------//
 }  // namespace detail
 }  // namespace optical
 }  // namespace celeritas

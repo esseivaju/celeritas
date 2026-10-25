@@ -9,10 +9,12 @@
 #include "corecel/Macros.hh"
 #include "corecel/Types.hh"
 #include "corecel/data/Collection.hh"
+#include "corecel/data/Filler.hh"
 #include "corecel/data/StateDataStore.hh"
 #include "corecel/grid/NonuniformGridData.hh"
 #include "celeritas/Quantities.hh"
 #include "celeritas/optical/Types.hh"
+#include "celeritas/optical/gen/GeneratorCounterState.hh"
 #include "celeritas/phys/GeneratorInterface.hh"
 
 namespace celeritas
@@ -114,7 +116,8 @@ struct WavelengthShiftData
  * The distributions are stored in a buffer indexed by the current buffer size
  * plus the track slot ID. The data is compacted at the end of each step by
  * removing all invalid distributions. The order of the distributions in the
- * buffers is guaranteed to be reproducible.
+ * buffers is guaranteed to be reproducible. All distributions past the
+ * buffer size and the slots written in the current step are invalid.
  */
 template<Ownership W, MemSpace M>
 struct WlsGeneratorStateData
@@ -159,9 +162,30 @@ struct WlsGeneratorStateData
  * Store optical WLS generation states in aux data.
  */
 template<MemSpace M>
-struct WlsGeneratorState : public GeneratorStateBase
+struct WlsGeneratorState : public GeneratorCounterState<M>
 {
     StateDataStore<WlsGeneratorStateData, M> store;
+
+    //! Construct with stream and buffer capacity
+    WlsGeneratorState(StreamId stream, size_type capacity)
+        : GeneratorCounterState<M>{stream}, store{stream, capacity}
+    {
+        this->clear_buffer();
+    }
+
+    //! Clear the counters and buffered distributions after an early abort
+    void reset_counters() final
+    {
+        GeneratorCounterState<M>::reset_counters();
+        this->clear_buffer();
+    }
+
+    //! Mark all distributions in the buffer as invalid
+    void clear_buffer()
+    {
+        Filler<WlsDistributionData, M> fill{{}, this->stream_id()};
+        fill(store.ref().distributions[AllItems<WlsDistributionData, M>{}]);
+    }
 
     //! True if states have been allocated
     explicit operator bool() const { return static_cast<bool>(store); }

@@ -6,8 +6,6 @@
 //---------------------------------------------------------------------------//
 #include "WlsGeneratorAction.hh"
 
-#include <algorithm>
-
 #include "corecel/Assert.hh"
 #include "corecel/data/AuxParamsRegistry.hh"
 #include "corecel/data/AuxStateVec.hh"
@@ -25,7 +23,6 @@
 #include "WavelengthShiftGenerator.hh"
 
 #include "detail/GeneratorAlgorithms.hh"
-#include "detail/OffloadAlgorithms.hh"
 #include "detail/WlsGeneratorExecutor.hh"
 
 namespace celeritas
@@ -39,10 +36,7 @@ namespace
 template<MemSpace M>
 auto make_state(StreamId stream, size_type size)
 {
-    using StoreT = StateDataStore<WlsGeneratorStateData, M>;
-
-    auto result = std::make_unique<WlsGeneratorState<M>>();
-    result->store = StoreT{stream, size};
+    auto result = std::make_unique<WlsGeneratorState<M>>(stream, size);
 
     CELER_ENSURE(*result);
     return result;
@@ -113,6 +107,13 @@ void WlsGeneratorAction::step(CoreParams const& params,
 /*!
  * Generate optical WLS photons from distribution data.
  *
+ * The distributions created by tracks in the previous step are stored in the
+ * track slots past the compacted buffer. Since the buffer size is only known
+ * on device, the buffer operations are launched over an upper bound \em b of
+ * the buffer size plus the number of track slots \em n , and the buffer
+ * capacity must be at least \em b + 2n to store the distributions created
+ * during this step.
+ *
  * \todo Accumulate the total number of steps (distributions) in \c
  * accum.buffer_size
  */
@@ -122,68 +123,56 @@ void WlsGeneratorAction::step_impl(CoreParams const& params,
 {
     CELER_EXPECT(state.aux());
 
-    using DistId = ItemId<WlsDistributionData>;
-    using DistRange = ItemRange<WlsDistributionData>;
-
     auto& aux_state = get<WlsGeneratorState<M>>(*state.aux(), this->aux_id());
-    auto& counters = aux_state.counters;
     auto& buffer = aux_state.store.ref().distributions;
+    auto counters = aux_state.device_counters();
 
-    auto num_pending_prev = counters.num_pending;
-
-    // Compact the buffer, returning the total number of valid distributions
-    counters.buffer_size = celeritas::detail::remove_if_invalid(
-        buffer, 0, counters.buffer_size + state.size(), state.stream_id());
-
-    if (counters.buffer_size > 0)
-    {
-        // If this process created photons, calculate the cumulative sum of the
-        // number of photons in the buffered distributions. This is used to
-        // determine which thread will generate photons from which distribution
-        counters.num_pending = detail::inclusive_scan_photons(
-            aux_state.store.ref().distributions,
-            aux_state.store.ref().offsets,
-            counters.buffer_size,
-            state.stream_id());
-    }
-
-    // Update the core state counters if there the process created any photons
-    if (counters.num_pending > num_pending_prev)
-    {
-        // This function doesn't change the aux_state counters, so the next if
-        // statement is still checking inclusive_scan_photons() result
-        state.add_pending(counters.num_pending - num_pending_prev);
-    }
-    if (counters.num_pending > 0)
-    {
-        // Generate the optical photons from the distribution data. To avoid
-        // synchronization, we defer the check for vacancies.
-        this->generate(params, state);
-
-        // Compact the buffer again to remove stale distributions and free up
-        // space to add new distributions during this step
-        counters.buffer_size = celeritas::detail::remove_if_invalid(
-            buffer, 0, counters.buffer_size, state.stream_id());
-    }
+    // Upper bound on the buffered distributions, including the ones created
+    // in the previous step
+    size_type bound = aux_state.buffer_bound() + state.size();
 
     // Ensure the buffer is large enough to hold WLS distributions created
     // during this step
-    CELER_VALIDATE(counters.buffer_size + state.size() <= buffer.size(),
+    CELER_VALIDATE(bound + state.size() <= buffer.size(),
                    << "insufficient capacity (" << buffer.size()
                    << ") for buffered optical WLS distribution data (total "
                       "capacity requirement of "
-                   << counters.buffer_size + state.size() << ")");
+                   << bound + state.size() << ")");
+
+    // Compact the buffer, storing the number of valid distributions, and
+    // clear the unspecified data left past the compacted buffer
+    detail::select_valid(buffer, bound, counters, state.stream_id());
+    detail::clear_tail(buffer, bound, counters, state.stream_id());
+
+    // Calculate the cumulative sum of the number of photons in the buffered
+    // distributions, which determines which thread will generate photons
+    // from which distribution, and add the new photons to the pending count
+    detail::inclusive_scan_photons(buffer,
+                                   aux_state.store.ref().offsets,
+                                   bound,
+                                   counters,
+                                   state.ref().init.counters,
+                                   state.stream_id());
+
+    // Generate the optical photons from the distribution data. To avoid
+    // synchronization, the number of photons and vacancies are checked on
+    // device.
+    this->generate(params, state);
+
+    // Compact the buffer again to remove stale distributions and free up
+    // space to add new distributions during this step
+    detail::select_valid(buffer, bound, counters, state.stream_id());
 
     // Clear data that tracks might write distributions to in this step, which
-    // is in an unspecified state after calling \c remove_if on the buffer
-    Filler<WlsDistributionData, M> fill{{}, state.stream_id()};
-    fill(buffer[DistRange(DistId(counters.buffer_size),
-                          DistId(counters.buffer_size + state.size()))]);
+    // is in an unspecified state after compacting the buffer
+    detail::clear_tail(buffer, bound, counters, state.stream_id());
 
     // Update the generator and optical core state counters
     this->update_counters(state);
 
-    CELER_ENSURE(!counters.buffer_size == !counters.num_pending);
+    // Up to one distribution per track slot can be added during this step
+    aux_state.grow_bound(state.size());
+    aux_state.copy_async();
 }
 
 //---------------------------------------------------------------------------//
@@ -205,9 +194,8 @@ void WlsGeneratorAction::generate(CoreParams const& params,
         wls_ ? wls_->host_ref() : NativeCRef<WavelengthShiftData>{},
         wls2_ ? wls2_->host_ref() : NativeCRef<WavelengthShiftData>{},
         aux_state.store.ref(),
-        aux_state.counters.buffer_size};
-    size_type num_gen = std::min(aux_state.counters.num_pending, state.size());
-    launch_action(num_gen, execute);
+        aux_state.device_counters()};
+    launch_action(state.size(), execute);
 }
 
 //---------------------------------------------------------------------------//

@@ -126,11 +126,16 @@ void Transporter::transport_impl(CoreState<M>& state) const
             // Add all untransported tracks to 'cut' counter
             counters.num_cut += counters.num_active + counters.num_pending;
 
+            this->params()->gen_reg()->sync_counters(*state.aux());
             this->params()->gen_reg()->reset(*state.aux());
             state.reset();
             break;
         }
     }
+
+    // Update the host copy of the generator counters and statistics
+    this->params()->gen_reg()->sync_counters(*state.aux());
+
     if (counters.num_cut > 0)
     {
         CELER_LOG_LOCAL(warning) << "Terminated " << counters.num_cut

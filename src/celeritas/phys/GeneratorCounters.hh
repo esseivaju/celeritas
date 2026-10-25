@@ -18,9 +18,9 @@ namespace celeritas
 /*!
  * Current sizes of the buffered generator data.
  *
- * The number of pending and generated tracks are updated by value on the host
- * at each core step. To allow accumulation over many steps which each may have
- * many photons, the type is templated.
+ * During stepping these are updated on device (see \c GeneratorStateCounters
+ * ), and a host copy is updated once stepping completes. To allow accumulation
+ * over many steps which each may have many photons, the type is templated.
  */
 template<class T = ::celeritas::size_type>
 struct GeneratorCounters
@@ -40,6 +40,21 @@ struct GeneratorCounters
     {
         return buffer_size == 0 && num_pending == 0;
     }
+};
+
+//---------------------------------------------------------------------------//
+/*!
+ * Generator counters stored in the memory space of the generator state.
+ *
+ * The \c current counters describe the buffered data being generated and are
+ * updated by kernels during the stepping loop. The \c completed counters
+ * accumulate the photons generated and the buffered data consumed since the
+ * counters were last read on the host.
+ */
+struct GeneratorStateCounters
+{
+    GeneratorCounters<> current;
+    GeneratorCounters<> completed;
 };
 
 //---------------------------------------------------------------------------//

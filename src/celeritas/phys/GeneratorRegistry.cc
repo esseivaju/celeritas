@@ -50,13 +50,28 @@ GeneratorId GeneratorRegistry::find(std::string const& label) const
 
 //---------------------------------------------------------------------------//
 /*!
+ * Update the host copy of the generator counters.
+ *
+ * This may synchronize with the device and should be called only once the
+ * stepping loop has completed.
+ */
+void GeneratorRegistry::sync_counters(AuxStateVec& aux) const
+{
+    for (auto id : range(GeneratorId{this->size()}))
+    {
+        this->at(id)->counters(aux).sync_counters();
+    }
+}
+
+//---------------------------------------------------------------------------//
+/*!
  * Reset the generator counters if the loop aborted early.
  */
 void GeneratorRegistry::reset(AuxStateVec& aux) const
 {
     for (auto id : range(GeneratorId{this->size()}))
     {
-        this->at(id)->counters(aux).counters = {};
+        this->at(id)->counters(aux).reset_counters();
     }
 }
 

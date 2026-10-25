@@ -35,10 +35,7 @@ namespace
 template<MemSpace M>
 auto make_state(StreamId stream, size_type size)
 {
-    using StoreT = StateDataStore<GeneratorStateData, M>;
-
-    auto result = std::make_unique<GeneratorState<M>>();
-    result->store = StoreT{stream, size};
+    auto result = std::make_unique<GeneratorState<M>>(stream, size);
 
     CELER_ENSURE(*result);
     return result;
@@ -176,7 +173,10 @@ void GeneratorAction::insert_impl(CoreState<M>& state, SpanConstData data) const
     }
 
     // Update counters and copy distributions to aux state
-    aux_state.counters.buffer_size = data.size();
+    GeneratorCounters<> counters;
+    counters.buffer_size = data.size();
+    aux_state.assign(counters);
+    aux_state.needs_scan = true;
     Copier<GeneratorDistributionData, M> copy_to_aux{aux_state.distributions(),
                                                      state.stream_id()};
     copy_to_aux(MemSpace::host, data);
@@ -193,38 +193,36 @@ void GeneratorAction::step_impl(CoreParams const& params,
     CELER_EXPECT(state.aux());
 
     auto& aux_state = get<GeneratorState<M>>(*state.aux(), this->aux_id());
-    auto& counters = aux_state.counters;
 
-    if (counters.num_generated == 0 && counters.buffer_size > 0)
+    // Upper bound on the number of buffered distributions
+    size_type bound = aux_state.buffer_bound();
+
+    if (aux_state.needs_scan && bound > 0)
     {
-        // If this process created photons, on the first step iteration
-        // calculate the cumulative sum of the number of photons in the
-        // buffered distributions. These values are used to determine which
-        // thread will generate photons from which distribution
-        counters.num_pending = detail::inclusive_scan_photons(
-            aux_state.store.ref().distributions,
-            aux_state.store.ref().offsets,
-            counters.buffer_size,
-            state.stream_id());
+        // If distributions were added, on the first step iteration calculate
+        // the cumulative sum of the number of photons in the buffered
+        // distributions. These values are used to determine which thread
+        // will generate photons from which distribution
+        detail::inclusive_scan_photons(aux_state.store.ref().distributions,
+                                       aux_state.store.ref().offsets,
+                                       bound,
+                                       aux_state.device_counters(),
+                                       {},
+                                       state.stream_id());
     }
+    aux_state.needs_scan = false;
 
-    if (counters.num_pending > 0)
+    if (bound > 0)
     {
         // Generate the optical photons from the distribution data. To avoid
-        // synchronization, we defer the check for vacancies.
+        // synchronization, the number of photons and vacancies are checked
+        // on device.
         this->generate(params, state);
     }
 
-    // Update the generator and optical core state counters
+    // Update the generator and optical core state counters, clearing the
+    // buffer once all photons have been generated
     this->update_counters(state);
-
-    // If there are no more tracks to generate, reset the buffer size and
-    // number of photons generated
-    if (counters.num_pending == 0)
-    {
-        aux_state.accum.buffer_size += counters.buffer_size;
-        counters = {};
-    }
 }
 
 //---------------------------------------------------------------------------//
@@ -241,7 +239,6 @@ void GeneratorAction::generate(CoreParams const& params,
 
     auto& aux_state
         = get<GeneratorState<MemSpace::native>>(*state.aux(), this->aux_id());
-    size_type num_gen = std::min(aux_state.counters.num_pending, state.size());
     {
         // Generate optical photons in vacant track slots
         detail::GeneratorExecutor execute{params.ptr<MemSpace::native>(),
@@ -249,15 +246,15 @@ void GeneratorAction::generate(CoreParams const& params,
                                           params.host_ref().cherenkov,
                                           params.host_ref().scintillation,
                                           aux_state.store.ref(),
-                                          aux_state.counters.buffer_size};
-        launch_action(num_gen, execute);
+                                          aux_state.device_counters()};
+        launch_action(state.size(), execute);
     }
     {
         // Update the cumulative sum of the number of photons per distribution
         // according to how many were generated
         detail::UpdateSumExecutor execute{
-            state.ptr(), aux_state.store.ref(), num_gen};
-        launch_kernel(aux_state.counters.buffer_size, execute);
+            state.ptr(), aux_state.store.ref(), aux_state.device_counters()};
+        launch_kernel(aux_state.buffer_bound(), execute);
     }
 }
 

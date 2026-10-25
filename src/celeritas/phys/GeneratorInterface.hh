@@ -64,13 +64,22 @@ class GeneratorInterface
 //---------------------------------------------------------------------------//
 /*!
  * Manage counters for generation states.
+ *
+ * The counters are updated in the state's memory space during stepping, and
+ * \c sync_counters copies them back to \c counters and \c accum .
  */
 struct GeneratorStateBase : public AuxStateInterface
 {
-    //! Counts since the start of the optical loop
+    //! Counts since the start of the optical loop (host copy)
     GeneratorCounters<size_type> counters;
     //! Counts accumulated over the event for diagnostics
     GeneratorCounters<std::size_t> accum;
+
+    //! Update the host counters from the counters in the state's memory
+    virtual void sync_counters() = 0;
+
+    //! Clear the current counters after the loop aborted early
+    virtual void reset_counters() = 0;
 };
 
 //---------------------------------------------------------------------------//
