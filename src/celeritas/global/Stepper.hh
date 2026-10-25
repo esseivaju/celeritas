@@ -193,6 +193,9 @@ class StepperInterface
     // Kill all tracks in flight to debug "stuck" tracks
     virtual void kill_active() = 0;
 
+    // Complete buffered work once all tracks have been transported
+    virtual void end_transport() = 0;
+
     // Reseed the RNGs at the start of an event for reproducibility
     virtual void reseed(UniqueEventId event_id) = 0;
 
@@ -396,6 +399,9 @@ class Stepper final : public StepperInterface
 
     // Kill all tracks in flight to debug "stuck" tracks
     void kill_active() final;
+
+    // Complete buffered work once all tracks have been transported
+    void end_transport() final;
 
     // Reseed the RNGs at the start of an event for reproducibility
     void reseed(UniqueEventId event_id) final;
