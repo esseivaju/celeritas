@@ -9,6 +9,7 @@
 #include "corecel/data/CollectionAlgorithms.hh"
 #include "corecel/io/Logger.hh"
 #include "corecel/random/params/RngParams.hh"
+#include "corecel/sys/Device.hh"
 #include "corecel/sys/ScopedProfiling.hh"
 #include "celeritas/random/RngReseed.hh"
 #include "celeritas/track/CounterAlgorithms.hh"
@@ -55,6 +56,7 @@ CoreState<M>::CoreState(
         device_ref_vec_ = DeviceVector<Ref>(1);
         device_ref_vec_.copy_to_device({&this->ref(), 1});
         ptr_ = make_observer(device_ref_vec_);
+        copied_ = DeviceEvent{celeritas::device()};
     }
     else if constexpr (M == MemSpace::host)
     {
@@ -143,6 +145,50 @@ void CoreState<M>::sync_put_counters(CoreStateCounters const& host_counters)
     {
         device().stream(this->stream_id()).sync();
     }
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Clear the generated, cut, and errored counts for a new loop.
+ *
+ * The number of pending tracks, which is accumulated before the loop starts,
+ * is unchanged.
+ */
+template<MemSpace M>
+void CoreState<M>::clear_tallies()
+{
+    celeritas::clear_tallies(this->ref().init.counters, this->stream_id());
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Copy the counters to host-accessible storage without synchronizing.
+ *
+ * For a device state, the copy is enqueued on the state's stream followed by
+ * an event, and the copy must not be accessed until \c wait_counters is
+ * called. Unlike \c sync_get_counters , waiting for the copy does not block
+ * work enqueued on the stream after it.
+ */
+template<MemSpace M>
+void CoreState<M>::async_copy_counters()
+{
+    host_counters_.copy_async(this->ref().init.counters.data(),
+                              this->stream_id());
+    if constexpr (M == MemSpace::device)
+    {
+        copied_.record(celeritas::device().stream(this->stream_id()));
+    }
+}
+
+//---------------------------------------------------------------------------//
+/*!
+ * Wait for the most recent counter copy and access it.
+ */
+template<MemSpace M>
+CoreStateCounters const& CoreState<M>::wait_counters() const
+{
+    copied_.sync();
+    return host_counters_.value();
 }
 
 //---------------------------------------------------------------------------//

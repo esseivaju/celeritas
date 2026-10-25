@@ -7,12 +7,14 @@
 #pragma once
 
 #include "corecel/cont/Span.hh"
+#include "corecel/data/AsyncSnapshot.hh"
 #include "corecel/data/AuxInterface.hh"
 #include "corecel/data/AuxStateVec.hh"
 #include "corecel/data/DeviceVector.hh"
 #include "corecel/data/ObserverPtr.hh"
 #include "corecel/data/StateDataStore.hh"
 #include "corecel/random/params/RngParamsFwd.hh"
+#include "corecel/sys/DeviceEvent.hh"
 #include "celeritas/Types.hh"
 #include "celeritas/phys/GeneratorCounters.hh"
 #include "celeritas/track/CoreStateCounters.hh"
@@ -172,6 +174,17 @@ class CoreState final : public CoreStateBase
     // Whether the state is being transported with no active particles
     bool warming_up() const;
 
+    //// COUNTERS ////
+
+    // Clear the generated, cut, and errored counts for a new loop
+    void clear_tallies();
+
+    // Asynchronously copy counters to host-accessible storage
+    void async_copy_counters();
+
+    // Wait for the most recent counter copy and access it
+    CoreStateCounters const& wait_counters() const;
+
     //// CORE DATA ////
 
     //! Get a reference to the mutable state data
@@ -201,6 +214,10 @@ class CoreState final : public CoreStateBase
 
     // Native pointer to ref or
     Ptr ptr_;
+
+    // Host copy of the counters and its completion event
+    AsyncSnapshot<CoreStateCounters> host_counters_;
+    DeviceEvent copied_{nullptr};
 };
 
 //---------------------------------------------------------------------------//
